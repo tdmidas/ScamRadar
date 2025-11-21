@@ -3,8 +3,12 @@ LLM Explainer using Google Gemini API
 Provides natural language explanations for model predictions based on SHAP values
 """
 import google.generativeai as genai
-from typing import Dict, List, Optional
+import logging
+import time
+from typing import Dict, List, Optional, Any
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class LLMExplainer:
@@ -13,7 +17,7 @@ class LLMExplainer:
         if not api_key:
             raise ValueError("Gemini API key not provided")
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash-lite')
+        self.model = genai.GenerativeModel('gemini-2.0-flash')
         
     def _translate_feature_name(self, name: str) -> str:
         """Translate technical feature names to human-readable descriptions"""
@@ -64,42 +68,124 @@ class LLMExplainer:
                                    prediction_prob: float,
                                    task_type: str,
                                    top_features: List[Dict],
-                                   max_words: int = 100) -> str:
+                                   max_words: int = 50) -> Dict[str, Any]:
         """
-        Generate explanation for top 5 features using Gemini
+        Generate explanation for top features using Gemini
+        Returns JSON format with feature name, value, and reason
         
         Args:
             prediction_prob: Model prediction probability (0-1)
             task_type: 'account' or 'transaction'
-            top_features: List of top 5 features with shap_value and feature_value
-            max_words: Maximum words in explanation (default 100)
-        """
-        risk_level = "HIGH RISK" if prediction_prob > 0.7 else ("MEDIUM RISK" if prediction_prob > 0.4 else "LOW RISK")
+            top_features: List of top features with shap_value and feature_value
+            max_words: Maximum words in explanation (default 50, shorter for extension)
         
-        prompt = f"""You are a Web3 security expert. Explain why these features are important for detecting {task_type}-level phishing/scam activities in a short, concise way (under {max_words} words).
+        Returns:
+            Dictionary with format: {
+                "feature_name": "Gas price",
+                "feature_value": 1000000,
+                "reason": "High gas price indicates potential scam..."
+            }
+        """
+        risk_level = "HIGH" if prediction_prob > 0.7 else ("MEDIUM" if prediction_prob > 0.4 else "LOW")
+        
+        # Get top feature only (most important)
+        top_feature = top_features[0] if top_features else None
+        if not top_feature:
+            return {
+                "feature_name": "Unknown",
+                "feature_value": 0,
+                "reason": "No features available for analysis"
+            }
+        
+        feature_name = self._translate_feature_name(top_feature['feature_name'])
+        feature_value = top_feature['feature_value']
+        impact = "increasing risk" if top_feature['shap_value'] > 0 else "decreasing risk"
+        
+        prompt = f"""Analyze Web3 {task_type} risk. Return ONLY valid JSON, no other text.
 
-PREDICTION: {prediction_prob:.2%} ({risk_level})
+Risk: {prediction_prob:.1%} ({risk_level})
+Top feature: {feature_name} = {feature_value:.2f} ({impact}, importance={abs(top_feature['shap_value']):.4f})
 
-TOP 5 IMPORTANT FEATURES:
-{self._format_features_for_prompt(top_features)}
-
-Explain:
-1. Why the most important feature (first one) is dangerous/suspicious
-2. What these features indicate about potential scam activity
-3. A brief risk assessment
-
-Keep it concise and focused on practical implications. Maximum {max_words} words."""
+Return JSON:
+{{
+  "reason": "Explain why this {feature_name} value ({feature_value:.2f}) is {impact} for this {task_type}. Be concise (max 20 words)."
+}}"""
 
         try:
-            response = self.model.generate_content(prompt)
-            explanation = response.text.strip()
+            api_start = time.time()
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.3,
+                    "max_output_tokens": 100,
+                }
+            )
+            api_time = time.time() - api_start
+            logger.debug(f"⏱️ [TIMING] Gemini API generate_content ({task_type}): {api_time:.2f}s")
             
-            # Truncate if too long
-            words = explanation.split()
-            if len(words) > max_words:
-                explanation = " ".join(words[:max_words]) + "..."
+            explanation_text = response.text.strip()
             
-            return explanation
+            # Try to extract JSON from response
+            import json
+            import re
+            
+            # Remove markdown code blocks if present
+            explanation_text = re.sub(r'```json\s*', '', explanation_text)
+            explanation_text = re.sub(r'```\s*', '', explanation_text)
+            explanation_text = explanation_text.strip()
+            
+            try:
+                # Try to parse as JSON
+                json_data = json.loads(explanation_text)
+                reason = json_data.get('reason', '')
+                
+                # Format feature value based on type
+                formatted_value = self._format_feature_value(top_feature['feature_name'], feature_value)
+                
+                return {
+                    "feature_name": feature_name,
+                    "feature_value": formatted_value,
+                    "reason": reason
+                }
+            except json.JSONDecodeError:
+                # If not valid JSON, use fallback
+                logger.warning(f"Failed to parse Gemini JSON response: {explanation_text[:100]}")
+                formatted_value = self._format_feature_value(top_feature['feature_name'], feature_value)
+                return {
+                    "feature_name": feature_name,
+                    "feature_value": formatted_value,
+                    "reason": f"This {feature_name} value ({formatted_value}) is {impact} for this {task_type}."
+                }
+            
         except Exception as e:
-            return f"Risk level: {risk_level} ({prediction_prob:.2%}). Top feature: {self._translate_feature_name(top_features[0]['feature_name'])} shows {'high risk' if top_features[0]['shap_value'] > 0 else 'low risk'} pattern. Error generating detailed explanation: {str(e)}"
+            logger.error(f"Error generating LLM explanation: {e}")
+            # Fallback to simple explanation
+            formatted_value = self._format_feature_value(top_feature['feature_name'], feature_value)
+            risk_desc = "increasing risk" if top_feature['shap_value'] > 0 else "decreasing risk"
+            return {
+                "feature_name": feature_name,
+                "feature_value": formatted_value,
+                "reason": f"This {feature_name} value ({formatted_value}) is {risk_desc}."
+            }
+    
+    def _format_feature_value(self, feature_name: str, value: float) -> str:
+        """Format feature value for display"""
+        # Format based on feature type
+        if 'gas_price' in feature_name or 'gas_used' in feature_name:
+            # Format as integer for gas
+            return str(int(value))
+        elif 'value' in feature_name and 'eth' not in feature_name.lower():
+            # Format as integer for token values
+            return str(int(value))
+        elif 'eth' in feature_name.lower() or 'price' in feature_name.lower():
+            # Format with decimals for ETH/price
+            return f"{value:.4f}"
+        elif 'ratio' in feature_name or 'duration' in feature_name:
+            # Format with 2 decimals for ratios/durations
+            return f"{value:.2f}"
+        else:
+            # Default: integer if whole number, else 2 decimals
+            if value == int(value):
+                return str(int(value))
+            return f"{value:.2f}"
 

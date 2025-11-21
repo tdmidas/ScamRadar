@@ -4,8 +4,12 @@ Fetches NFT collection data from Rarible API
 """
 import os
 import httpx
+import logging
+import time
 from typing import Optional, Dict, Any
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv("RARIBLE_BASE_URL", "https://api.rarible.org/v0.1")
 RARIBLE_API_KEY = settings.rarible_api_key
@@ -23,11 +27,14 @@ async def rarible_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dic
         raise RuntimeError("RARIBLE_API_KEY not set")
     
     url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    start_time = time.time()
     async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=HEADERS) as client:
         r = await client.get(url, params=params or {})
+        elapsed = time.time() - start_time
         
         # Debug: Print response details if error
         if r.status_code != 200:
+            logger.warning(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s (Status: {r.status_code})")
             print(f"DEBUG - Request URL: {url}")
             print(f"DEBUG - Status Code: {r.status_code}")
             print(f"DEBUG - Response Headers: {dict(r.headers)}")
@@ -36,6 +43,8 @@ async def rarible_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dic
                 print(f"DEBUG - Response Body: {response_body}")
             except:
                 print(f"DEBUG - Response Text: {r.text[:500]}")
+        else:
+            logger.debug(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s")
         
         r.raise_for_status()
         return r.json()
@@ -120,6 +129,7 @@ async def enrich_transaction_with_nft_data(transaction: Dict[str, Any]) -> Dict[
     if not contract_address or contract_address == "":
         return transaction
     
+    enrich_start = time.time()
     try:
         # Get collection statistics using the new API endpoint
         collection_id = f"ETHEREUM:{contract_address}"
@@ -166,6 +176,9 @@ async def enrich_transaction_with_nft_data(transaction: Dict[str, Any]) -> Dict[
         except Exception:
             # Keep default values (all 0)
             pass
+    finally:
+        enrich_time = time.time() - enrich_start
+        logger.debug(f"⏱️ [TIMING] NFT enrichment for {contract_address[:10]}...: {enrich_time:.2f}s")
     
     return transaction
 

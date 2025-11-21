@@ -50,12 +50,24 @@ class SHAPExplainer:
         """Prepare a background dataset for SHAP using representative samples (numpy array)."""
         sample_features = np.asarray(sample_features)
         n_samples, n_feats = sample_features.shape
+        
+        # Check if we need to update background data
+        old_background_shape = self.background_data.shape if self.background_data is not None else None
+        new_background = None
+        
         if n_samples <= self.background_data_size:
-            self.background_data = sample_features.copy()
+            new_background = sample_features.copy()
         else:
             # sample without replacement
             idx = np.random.choice(n_samples, self.background_data_size, replace=False)
-            self.background_data = sample_features[idx]
+            new_background = sample_features[idx]
+        
+        # If background data changed, clear explainer cache
+        if self.background_data is None or not np.array_equal(self.background_data, new_background):
+            if old_background_shape is not None:
+                # Background data changed, clear cache
+                self.explainers = {}
+            self.background_data = new_background
 
     def explain_prediction(self, features, task_id, feature_names, apply_sigmoid=True, tol=1e-6):
         """

@@ -36,18 +36,43 @@ const transactionRiskScore = document.getElementById('transaction-risk-score');
 const transactionExplanation = document.getElementById('transaction-explanation');
 
 // Check for pending transaction on load
-chrome.storage.local.get(['pendingTransaction'], (result) => {
+// Also check URL parameter for alert mode
+const urlParams = new URLSearchParams(window.location.search);
+const isAlertMode = urlParams.get('source') === 'alert';
+
+console.log('[Web3 Antivirus] Popup loaded, isAlertMode:', isAlertMode);
+
+chrome.storage.local.get(['pendingTransaction', 'transactionTimestamp'], (result) => {
+  console.log('[Web3 Antivirus] Storage result:', result);
+  
   if (result.pendingTransaction) {
-    showTransactionView(result.pendingTransaction);
+    // Check if transaction is recent (within last 30 seconds)
+    const now = Date.now();
+    const txTime = result.transactionTimestamp || 0;
+    const isRecent = (now - txTime) < 30000; // 30 seconds
+    
+    if (isAlertMode || isRecent) {
+      console.log('[Web3 Antivirus] Showing transaction view');
+      showTransactionView(result.pendingTransaction);
+    } else {
+      console.log('[Web3 Antivirus] Transaction too old, showing default view');
+      showDefaultView();
+    }
   } else {
+    console.log('[Web3 Antivirus] No pending transaction, showing default view');
     showDefaultView();
   }
 });
 
 // Show transaction view
 async function showTransactionView(transactionData: any) {
+  console.log('[Web3 Antivirus] showTransactionView called with data:', transactionData);
+  
+  // Remove hidden class and add active
+  transactionView?.classList.remove('hidden');
   transactionView?.classList.add('active');
   defaultView?.classList.remove('active');
+  defaultView?.classList.add('hidden');
   
   // Display transaction details
   if (fromAddressEl) fromAddressEl.textContent = formatAddress(transactionData.from || '');
@@ -66,9 +91,15 @@ async function showTransactionView(transactionData: any) {
     nftDetailEl.style.display = 'none';
   }
   
-  // Set Etherscan link
-  if (etherscanLinkEl) {
+  // Set Etherscan link (moved to below to-address in HTML)
+  if (etherscanLinkEl && etherscanLinkEl instanceof HTMLAnchorElement) {
     etherscanLinkEl.href = `https://etherscan.io/address/${transactionData.to || ''}`;
+  }
+  
+  // Hide warning section initially (will show after analysis)
+  const warningSection = document.getElementById('warning-section');
+  if (warningSection) {
+    warningSection.style.display = 'none';
   }
   
   // Analyze transaction
@@ -77,8 +108,10 @@ async function showTransactionView(transactionData: any) {
 
 // Show default view
 function showDefaultView() {
+  defaultView?.classList.remove('hidden');
   defaultView?.classList.add('active');
   transactionView?.classList.remove('active');
+  transactionView?.classList.add('hidden');
 }
 
 // Analyze transaction for popup
@@ -102,7 +135,8 @@ async function analyzeTransactionForPopup(transactionData: any) {
     // Check if account has no transactions
     if (accountData.detection_mode === 'no_data' || !accountData.account_scam_probability) {
       // Use transaction-level detection only
-      await analyzeTransactionOnly(transactionData);
+      const txResult = await analyzeTransactionOnly(transactionData);
+      displayRiskExplanations(accountData, txResult);
       return;
     }
     
@@ -117,14 +151,59 @@ async function analyzeTransactionForPopup(transactionData: any) {
     const txRisk = txResult.transaction_scam_probability || 0;
     updateRiskDisplay(transactionRiskEl, txRisk, 'Transaction Risk');
     
-    // Display explanations
+    // Show warning section only after analysis is complete
+    showWarningSection(txRisk, accountRisk);
+    
+    // Display explanations (this will also hide loading)
     displayRiskExplanations(accountData, txResult);
     
   } catch (error) {
     console.error('Error analyzing transaction:', error);
+    hideLoading('risk-explanations');
     if (riskExplanationsEl) {
       riskExplanationsEl.innerHTML = '<div class="risk-item warning">Error analyzing transaction. Please try again.</div>';
     }
+  } finally {
+    hideLoading('risk-explanations');
+  }
+}
+
+// Show warning section based on risk level
+function showWarningSection(txRisk: number, accountRisk: number | null) {
+  const warningSection = document.getElementById('warning-section');
+  const riskBadge = document.getElementById('risk-badge');
+  const warningMessage = document.getElementById('warning-message');
+  
+  if (!warningSection) return;
+  
+  // Determine overall risk (use transaction risk if account risk not available)
+  const overallRisk = accountRisk !== null ? Math.max(txRisk, accountRisk) : txRisk;
+  
+  if (overallRisk > 0.7) {
+    // High risk
+    warningSection.style.display = 'block';
+    if (riskBadge) {
+      riskBadge.className = 'risk-badge high-risk';
+      const riskText = riskBadge.querySelector('.risk-text');
+      if (riskText) riskText.textContent = 'High-risk transaction';
+    }
+    if (warningMessage) {
+      warningMessage.textContent = 'We found critical risks.';
+    }
+  } else if (overallRisk > 0.4) {
+    // Medium risk
+    warningSection.style.display = 'block';
+    if (riskBadge) {
+      riskBadge.className = 'risk-badge medium-risk';
+      const riskText = riskBadge.querySelector('.risk-text');
+      if (riskText) riskText.textContent = 'Medium-risk transaction';
+    }
+    if (warningMessage) {
+      warningMessage.textContent = 'Some risks detected.';
+    }
+  } else {
+    // Low risk - hide warning
+    warningSection.style.display = 'none';
   }
 }
 
@@ -162,6 +241,13 @@ async function analyzeTransactionOnly(transactionData: any, accountData?: any) {
   const txRisk = result.transaction_scam_probability || 0;
   updateRiskDisplay(transactionRiskEl, txRisk, 'Transaction Risk');
   
+  // Show warning section after analysis
+  const accountRisk = accountData?.account_scam_probability || null;
+  showWarningSection(txRisk, accountRisk);
+  
+  // Hide loading (will be shown again in displayRiskExplanations if needed)
+  hideLoading('risk-explanations');
+  
   return result;
 }
 
@@ -171,20 +257,40 @@ function displayRiskExplanations(accountData: any, txData: any) {
   
   let html = '';
   
-  // Account explanations
+  // Account explanations (new format: {feature_name, feature_value, reason})
   if (accountData.llm_explanations?.account) {
-    html += `<div class="risk-item ${getRiskClass(accountData.account_scam_probability)}">
-      <div class="risk-item-title">Account Risk Analysis</div>
-      <div class="risk-item-desc">${accountData.llm_explanations.account}</div>
-    </div>`;
+    const accountExpl = accountData.llm_explanations.account;
+    // Check if it's new format (object) or old format (string)
+    if (typeof accountExpl === 'object' && accountExpl.feature_name) {
+      html += `<div class="risk-item ${getRiskClass(accountData.account_scam_probability)}">
+        <div class="risk-item-title">${accountExpl.feature_name} ${accountExpl.feature_value}</div>
+        <div class="risk-item-desc">${accountExpl.reason}</div>
+      </div>`;
+    } else if (typeof accountExpl === 'string') {
+      // Fallback for old format
+      html += `<div class="risk-item ${getRiskClass(accountData.account_scam_probability)}">
+        <div class="risk-item-title">Account Risk Analysis</div>
+        <div class="risk-item-desc">${accountExpl}</div>
+      </div>`;
+    }
   }
   
-  // Transaction explanations
+  // Transaction explanations (new format: {feature_name, feature_value, reason})
   if (txData.llm_explanations?.transaction) {
-    html += `<div class="risk-item ${getRiskClass(txData.transaction_scam_probability)}">
-      <div class="risk-item-title">Transaction Risk Analysis</div>
-      <div class="risk-item-desc">${txData.llm_explanations.transaction}</div>
-    </div>`;
+    const txExpl = txData.llm_explanations.transaction;
+    // Check if it's new format (object) or old format (string)
+    if (typeof txExpl === 'object' && txExpl.feature_name) {
+      html += `<div class="risk-item ${getRiskClass(txData.transaction_scam_probability)}">
+        <div class="risk-item-title">${txExpl.feature_name} ${txExpl.feature_value}</div>
+        <div class="risk-item-desc">${txExpl.reason}</div>
+      </div>`;
+    } else if (typeof txExpl === 'string') {
+      // Fallback for old format
+      html += `<div class="risk-item ${getRiskClass(txData.transaction_scam_probability)}">
+        <div class="risk-item-title">Transaction Risk Analysis</div>
+        <div class="risk-item-desc">${txExpl}</div>
+      </div>`;
+    }
   }
   
   // Feature highlights
@@ -209,6 +315,7 @@ function displayRiskExplanations(accountData: any, txData: any) {
   }
   
   riskExplanationsEl.innerHTML = html || '<div class="risk-item">No detailed risk information available.</div>';
+  hideLoading('risk-explanations');
 }
 
 // Update risk display
@@ -279,15 +386,35 @@ function showLoading(elementId: string) {
   }
 }
 
+function hideLoading(elementId: string) {
+  const el = document.getElementById(elementId);
+  // Don't clear the content here, let displayRiskExplanations set it
+  // This function is mainly for error cases
+}
+
 // Event listeners
-rejectBtn?.addEventListener('click', () => {
-  chrome.storage.local.set({ transactionDecision: 'reject' });
+rejectBtn?.addEventListener('click', async () => {
+  // Get requestId from storage
+  const result = await chrome.storage.local.get(['transactionRequestId']);
+  const requestId = result.transactionRequestId || '';
+  
+  chrome.storage.local.set({ 
+    transactionDecision: 'reject',
+    transactionRequestId: requestId
+  });
   chrome.storage.local.remove('pendingTransaction');
   window.close();
 });
 
-continueBtn?.addEventListener('click', () => {
-  chrome.storage.local.set({ transactionDecision: 'approve' });
+continueBtn?.addEventListener('click', async () => {
+  // Get requestId from storage
+  const result = await chrome.storage.local.get(['transactionRequestId']);
+  const requestId = result.transactionRequestId || '';
+  
+  chrome.storage.local.set({ 
+    transactionDecision: 'approve',
+    transactionRequestId: requestId
+  });
   chrome.storage.local.remove('pendingTransaction');
   window.close();
 });

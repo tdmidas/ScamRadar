@@ -2,128 +2,98 @@ export default defineContentScript({
   matches: ['<all_urls>'],
   runAt: 'document_start',
   main() {
-    console.log('[Web3 Antivirus] Content script loaded');
+    console.log('[Web3 Antivirus] Content script loaded on:', window.location.href);
     // Intercept MetaMask transaction requests
     interceptMetaMaskTransactions();
+    
+    // Also try to intercept after page load
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        console.log('[Web3 Antivirus] DOM loaded, re-checking interceptor');
+        interceptMetaMaskTransactions();
+      });
+    }
   },
 });
 
 function interceptMetaMaskTransactions() {
-  // Inject script to intercept window.ethereum before page loads
+  // Inject script file instead of inline script to bypass CSP
+  // The file needs to be in web_accessible_resources
   const script = document.createElement('script');
-  script.id = 'web3-antivirus-injector';
-  script.textContent = `
-    (function() {
-      console.log('[Web3 Antivirus] Injecting MetaMask interceptor...');
-      
-      // Try to intercept immediately if ethereum exists
-      if (window.ethereum) {
-        setupInterceptor();
-      } else {
-        // Watch for ethereum to be added
-        let attempts = 0;
-        const checkInterval = setInterval(() => {
-          attempts++;
-          if (window.ethereum) {
-            clearInterval(checkInterval);
-            console.log('[Web3 Antivirus] Found window.ethereum, setting up interceptor');
-            setupInterceptor();
-          } else if (attempts > 50) { // 5 seconds max
-            clearInterval(checkInterval);
-            console.warn('[Web3 Antivirus] window.ethereum not found after 5s');
-          }
-        }, 100);
-      }
-      
-      function setupInterceptor() {
-        if (window.ethereum._web3AntivirusPatched) {
-          console.log('[Web3 Antivirus] Already patched');
-          return;
-        }
-        
-        const originalRequest = window.ethereum.request.bind(window.ethereum);
-        window.ethereum._web3AntivirusPatched = true;
-        
-        window.ethereum.request = async function(args) {
-          console.log('[Web3 Antivirus] Request intercepted:', args.method);
-          
-          // Intercept transaction requests
-          if (args && (args.method === 'eth_sendTransaction' || args.method === 'eth_signTransaction')) {
-            const tx = args.params && args.params[0];
-            if (tx) {
-              console.log('[Web3 Antivirus] Transaction detected, analyzing...', tx);
-              
-              // Send transaction data to extension via postMessage
-              window.postMessage({
-                type: 'WEB3_ANTIVIRUS_TRANSACTION',
-                data: {
-                  from: tx.from || '',
-                  to: tx.to || '',
-                  value: tx.value || '0x0',
-                  data: tx.data || '0x',
-                  gas: tx.gas || tx.gasLimit || '0x0',
-                  gasPrice: tx.gasPrice || tx.maxFeePerGas || '0x0',
-                  chainId: tx.chainId || '0x1',
-                  method: args.method
-                }
-              }, '*');
-              
-              // Wait for user decision
-              return new Promise((resolve, reject) => {
-                let timeoutId;
-                const checkDecision = setInterval(() => {
-                  if (window._web3AntivirusDecision) {
-                    clearInterval(checkDecision);
-                    clearTimeout(timeoutId);
-                    
-                    const decision = window._web3AntivirusDecision;
-                    delete window._web3AntivirusDecision;
-                    
-                    if (decision === 'approve') {
-                      console.log('[Web3 Antivirus] Transaction APPROVED by user');
-                      originalRequest(args).then(resolve).catch(reject);
-                    } else {
-                      console.log('[Web3 Antivirus] Transaction REJECTED by user');
-                      reject(new Error('Transaction rejected by Web3 Antivirus'));
-                    }
-                  }
-                }, 100);
-                
-                // Timeout after 60 seconds
-                timeoutId = setTimeout(() => {
-                  clearInterval(checkDecision);
-                  console.warn('[Web3 Antivirus] Decision timeout, allowing transaction');
-                  originalRequest(args).then(resolve).catch(reject);
-                }, 60000);
-              });
-            }
-          }
-          
-          // For other requests, proceed normally
-          return originalRequest(args);
-        };
-        
-        console.log('[Web3 Antivirus] MetaMask interceptor installed successfully!');
-      }
-    })();
-  `;
+  script.src = chrome.runtime.getURL('inject.js');
+  script.onload = () => {
+    console.log('[Web3 Antivirus] Inject script loaded successfully');
+    script.remove();
+  };
+  script.onerror = () => {
+    console.error('[Web3 Antivirus] Failed to load inject script');
+  };
   
   // Inject script ASAP
   (document.head || document.documentElement).prepend(script);
   
-  // Listen for messages from injected script
-  window.addEventListener('message', async (event) => {
-    if (event.source !== window) return;
+  // Also try after DOM ready as fallback
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      const script2 = document.createElement('script');
+      script2.src = chrome.runtime.getURL('inject.js');
+      (document.head || document.documentElement).prepend(script2);
+    });
+  }
+}
+
+// Listen for messages from injected script
+window.addEventListener('message', async (event) => {
+  if (event.source !== window) {
+    console.log('[Web3 Antivirus] Message from different source, ignoring');
+    return;
+  }
+  
+  console.log('[Web3 Antivirus] Message received in content script:', event.data);
+  
+  if (event.data && event.data.type === 'WEB3_ANTIVIRUS_TRANSACTION') {
+    console.log('[Web3 Antivirus] Transaction message received in content script, data:', event.data.data);
+    const transactionData = event.data.data;
+    const requestId = event.data.requestId;
     
-    if (event.data && event.data.type === 'WEB3_ANTIVIRUS_TRANSACTION') {
-      console.log('[Web3 Antivirus] Transaction message received in content script');
-      const transactionData = event.data.data;
+    // Send to background script to open popup window
+    console.log('[Web3 Antivirus] Sending message to background script with requestId:', requestId);
+    chrome.runtime.sendMessage({
+      type: 'METAMASK_TRANSACTION',
+      data: transactionData,
+      requestId: requestId
+    }).then(() => {
+      console.log('[Web3 Antivirus] Message sent to background successfully');
+    }).catch(err => {
+      console.error('[Web3 Antivirus] Failed to send message to background:', err);
+    });
+    
+    // Note: Modal removed - only popup window will be shown
+  }
+  
+  // Listen for decision messages from popup
+  chrome.storage.local.onChanged.addListener((changes) => {
+    if (changes.transactionDecision) {
+      const decision = changes.transactionDecision.newValue;
+      const requestId = changes.transactionRequestId?.newValue;
       
-      // Show in-page modal instead of trying to open popup
-      showTransactionModal(transactionData);
+      console.log('[Web3 Antivirus] Decision received in content script:', decision, 'requestId:', requestId);
+      
+      // Send decision to page context
+      const script = document.createElement('script');
+      script.textContent = `
+        window._web3AntivirusDecision = {
+          decision: '${decision}',
+          requestId: '${requestId || ''}'
+        };
+      `;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
     }
   });
-}
+});
+
+console.log('[Web3 Antivirus] Message listener registered');
 
 // Create in-page modal for transaction analysis
 async function showTransactionModal(transactionData: any) {

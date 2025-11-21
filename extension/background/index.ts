@@ -22,18 +22,19 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'METAMASK_TRANSACTION') {
       // Handle MetaMask transaction detection
-      handleMetaMaskTransaction(message.data);
+      handleMetaMaskTransaction(message.data, message.requestId);
       sendResponse({ success: true });
     }
     return true; // Keep channel open for async response
   });
 });
 
-async function handleMetaMaskTransaction(transactionData: any) {
+async function handleMetaMaskTransaction(transactionData: any, requestId?: string) {
   // Store transaction data for popup/standalone window to access
   await chrome.storage.local.set({
     pendingTransaction: transactionData,
-    transactionTimestamp: Date.now()
+    transactionTimestamp: Date.now(),
+    transactionRequestId: requestId || ''
   });
   
   await openOrFocusAlertWindow();

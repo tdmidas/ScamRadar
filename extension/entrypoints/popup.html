@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Web3 Antivirus</title>
+  <title>ScamRadar</title>
   <link rel="stylesheet" href="./popup/style.css">
 </head>
 <body>
@@ -11,15 +11,18 @@
     <!-- Transaction Warning View (shown when intercepting transaction) -->
     <div id="transaction-view" class="view hidden">
       <div class="header">
-        <h1>WEB3 ANTIVIRUS</h1>
+        <div class="header-content">
+          <img src="./images/logo.png" alt="ScamRadar" class="header-logo" />
+          <h1>ScamRadar</h1>
+        </div>
       </div>
       
-      <div class="warning-section">
-        <div class="risk-badge high-risk">
+      <div class="warning-section" id="warning-section" style="display: none;">
+        <div class="risk-badge high-risk" id="risk-badge">
           <span class="risk-icon">⚡</span>
           <span class="risk-text">High-risk transaction</span>
         </div>
-        <p class="warning-message">We found critical risks.</p>
+        <p class="warning-message" id="warning-message">We found critical risks.</p>
       </div>
       
       <div class="transaction-details">
@@ -30,6 +33,9 @@
         <div class="detail-item">
           <label>To Address</label>
           <div class="address-value" id="to-address">-</div>
+          <a href="#" id="etherscan-link" target="_blank" class="etherscan-link" style="display: block; margin-top: 4px; font-size: 12px; color: #667eea; text-decoration: none;">
+            View account on Etherscan
+          </a>
         </div>
         <div class="detail-item">
           <label>You're sending</label>
@@ -67,14 +73,10 @@
       </div>
       
       <div class="actions">
-        <a href="#" id="etherscan-link" target="_blank" class="etherscan-button">
-          View on Etherscan
-        </a>
         <div class="decision-buttons">
           <button class="btn btn-reject" id="reject-btn">Reject</button>
           <button class="btn btn-continue" id="continue-btn">
             Continue
-            <span class="warning-icon">⚠️</span>
           </button>
         </div>
       </div>
@@ -83,7 +85,10 @@
     <!-- Default View (shown when no transaction) -->
     <div id="default-view" class="view">
       <div class="header">
-        <h1>WEB3 ANTIVIRUS</h1>
+        <div class="header-content">
+          <img src="./images/logo.png" alt="ScamRadar" class="header-logo" />
+          <h1>ScamRadar</h1>
+        </div>
         <p class="subtitle">Real-time scam protection</p>
       </div>
       

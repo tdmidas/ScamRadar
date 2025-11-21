@@ -208,14 +208,17 @@ async def detect_transaction(body: DetectTransactionIn):
             )
         
         # Call detection service (NFT enrichment will happen inside)
+        detection_start = time.time()
         detection_service = get_detection_service()
         result = await detection_service.detect_transaction(
             transaction_data=transaction_data,
             explain=body.explain,
             explain_with_llm=body.explain_with_llm
         )
+        detection_time = time.time() - detection_start
         
         logger.info(f"Transaction detection completed: prob={result.get('transaction_scam_probability'):.4f}, mode={result.get('detection_mode')}")
+        logger.info(f"⏱️ [TIMING] Total endpoint time: {detection_time:.2f}s")
         return result
         
     except HTTPException:
@@ -246,6 +249,7 @@ async def detect(body: DetectIn):
                 detail="explain must be True when explain_with_llm is True"
             )
         
+        detection_start = time.time()
         detection_service = get_detection_service()
         result = await detection_service.detect_account(
             account_address=body.account_address,
@@ -253,8 +257,10 @@ async def detect(body: DetectIn):
             explain_with_llm=body.explain_with_llm,
             max_transactions=body.max_transactions
         )
+        detection_time = time.time() - detection_start
         
         logger.info(f"Account detection completed: address={body.account_address}, mode={result.get('detection_mode')}")
+        logger.info(f"⏱️ [TIMING] Total endpoint time: {detection_time:.2f}s")
         return result
     except HTTPException:
         raise
