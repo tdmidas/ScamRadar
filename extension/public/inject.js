@@ -4,6 +4,14 @@
 
 (function() {
   'use strict';
+  
+  // Prevent multiple injections
+  if (window._web3AntivirusInjected) {
+    console.log('[Web3 Antivirus] Already injected, skipping...');
+    return;
+  }
+  window._web3AntivirusInjected = true;
+  
   console.log('[Web3 Antivirus] Injecting MetaMask REPLACEMENT in page context...');
   
   // Store original MetaMask provider if it exists
@@ -39,20 +47,20 @@
       request: async function(args) {
         console.log('[Web3 Antivirus] Request intercepted:', args && args.method, 'args:', args);
         
-        // Intercept transaction and signing requests
-        if (args && (
-          args.method === 'eth_sendTransaction' || 
-          args.method === 'eth_signTransaction' ||
-          args.method === 'eth_sign' ||
-          args.method === 'personal_sign' ||
-          args.method === 'eth_signTypedData' ||
-          args.method === 'eth_signTypedData_v3' ||
-          args.method === 'eth_signTypedData_v4'
-        )) {
-          return handleTransactionOrSignRequest(args);
+        // Intercept ALL transaction requests (eth_sendTransaction, eth_signTransaction)
+        // This includes ETH transfers, NFT transfers, token transfers, contract interactions, etc.
+        // Do NOT intercept: signing requests (eth_sign, personal_sign) or connection requests (eth_requestAccounts)
+        if (args && (args.method === 'eth_sendTransaction' || args.method === 'eth_signTransaction')) {
+          const tx = args.params && args.params[0];
+          
+          if (tx) {
+            console.log('[Web3 Antivirus] Transaction detected, showing popup. Type:', 
+              isNFTTransaction(tx) ? 'NFT' : 'ETH/Token/Contract');
+            return handleTransactionOrSignRequest(args);
+          }
         }
         
-        // For other requests, forward to original provider if available
+        // For all other requests (eth_requestAccounts, eth_accounts, signing, etc.), forward to original provider
         if (originalMetaMaskProvider) {
           try {
             return await originalMetaMaskProvider.request(args);
@@ -70,7 +78,11 @@
       send: function(method, params) {
         console.log('[Web3 Antivirus] Legacy send method called:', method);
         if (method === 'eth_sendTransaction' || method === 'eth_signTransaction') {
-          return this.request({ method: method, params: params });
+          const tx = params && params[0];
+          if (tx) {
+            console.log('[Web3 Antivirus] Transaction detected in legacy send');
+            return this.request({ method: method, params: params });
+          }
         }
         if (originalMetaMaskProvider && originalMetaMaskProvider.send) {
           return originalMetaMaskProvider.send(method, params);
@@ -82,10 +94,14 @@
       sendAsync: function(payload, callback) {
         console.log('[Web3 Antivirus] Legacy sendAsync method called:', payload);
         if (payload.method === 'eth_sendTransaction' || payload.method === 'eth_signTransaction') {
-          this.request({ method: payload.method, params: payload.params || [] })
-            .then(result => callback(null, { result: result }))
-            .catch(err => callback(err));
-          return;
+          const tx = payload.params && payload.params[0];
+          if (tx) {
+            console.log('[Web3 Antivirus] Transaction detected in legacy sendAsync');
+            this.request({ method: payload.method, params: payload.params || [] })
+              .then(result => callback(null, { result: result }))
+              .catch(err => callback(err));
+            return;
+          }
         }
         if (originalMetaMaskProvider && originalMetaMaskProvider.sendAsync) {
           return originalMetaMaskProvider.sendAsync(payload, callback);
@@ -148,6 +164,53 @@
     return replacementProvider;
   }
   
+  // Check if transaction is an NFT transaction
+  function isNFTTransaction(tx) {
+    if (!tx) return false;
+    
+    const data = tx.data || '0x';
+    
+    // If no data field or data is empty/zero, it's not an NFT transaction
+    if (!data || data === '0x' || data === '0x0' || data.length < 10) {
+      return false;
+    }
+    
+    // Extract function selector (first 4 bytes = 10 hex characters including 0x)
+    const functionSelector = data.slice(0, 10).toLowerCase();
+    
+    // Common NFT function selectors
+    const nftFunctionSelectors = {
+      '0x23b872dd': 'transferFrom',           // ERC721 transferFrom
+      '0x42842e0e': 'safeTransferFrom',       // ERC721 safeTransferFrom
+      '0xb88d4fde': 'safeTransferFrom',       // ERC721 safeTransferFrom (with data)
+      '0xf242432a': 'safeBatchTransferFrom', // ERC1155 safeBatchTransferFrom
+      '0x2eb2c2d6': 'safeBatchTransferFrom',  // ERC1155 safeBatchTransferFrom (alternative)
+      '0x095ea7b3': 'approve',                // ERC20/ERC721 approve
+      '0xa22cb465': 'setApprovalForAll',     // ERC721/ERC1155 setApprovalForAll
+    };
+    
+    // Check if function selector matches NFT functions
+    const isNFTFunction = nftFunctionSelectors.hasOwnProperty(functionSelector);
+    
+    if (isNFTFunction) {
+      console.log('[Web3 Antivirus] NFT function detected:', nftFunctionSelectors[functionSelector], 'selector:', functionSelector);
+      return true;
+    }
+    
+    // Also check if value is 0 and has data (common for NFT transfers)
+    const value = tx.value || '0x0';
+    const isZeroValue = value === '0x0' || value === '0x' || parseInt(value, 16) === 0;
+    
+    if (isZeroValue && data.length > 10) {
+      // Zero value with data might be NFT transfer, but be conservative
+      // Only treat as NFT if we're confident (has to address that might be contract)
+      console.log('[Web3 Antivirus] Zero value transaction with data, might be NFT');
+      return true; // Be more aggressive - treat as potential NFT
+    }
+    
+    return false;
+  }
+  
   // Handle transaction or signing requests
   async function handleTransactionOrSignRequest(args) {
     const tx = args.params && args.params[0];
@@ -184,80 +247,99 @@
     // Wait for user decision
     return new Promise(function(resolve, reject) {
       let timeoutId;
-      const checkDecision = setInterval(function() {
-        if (window._web3AntivirusDecision && window._web3AntivirusDecision.requestId === requestId) {
-          clearInterval(checkDecision);
-          clearTimeout(timeoutId);
-          
-          const decision = window._web3AntivirusDecision.decision;
-          const decisionRequestId = window._web3AntivirusDecision.requestId;
-          delete window._web3AntivirusDecision;
-          
-          if (decision === 'approve') {
-            console.log('[Web3 Antivirus] Transaction APPROVED by user, forwarding to MetaMask (silent)');
-            // Forward to original MetaMask provider
-            if (originalMetaMaskProvider) {
-              // Use the original provider directly without changing window.ethereum
-              // This way MetaMask won't detect that window.ethereum changed
-              originalMetaMaskProvider.request(args)
-                .then(result => {
-                  resolve(result);
-                })
-                .catch(err => {
-                  reject(err);
-                });
-            } else {
-              // If no original provider, try to find MetaMask provider
-              // MetaMask might be in window.ethereum.providers array
-              if (window.ethereum && window.ethereum.providers) {
-                const metamaskProvider = window.ethereum.providers.find((p: any) => p.isMetaMask);
-                if (metamaskProvider) {
-                  originalMetaMaskProvider = metamaskProvider;
-                  metamaskProvider.request(args)
-                    .then(result => resolve(result))
-                    .catch(err => reject(err));
-                } else {
-                  reject(new Error('No wallet provider available'));
-                }
+      let decisionReceived = false;
+      
+      // Function to process decision
+      function processDecision(decision, decisionRequestId) {
+        if (decisionReceived) return;
+        if (decisionRequestId && decisionRequestId !== requestId) {
+          console.log('[Web3 Antivirus] Decision requestId mismatch:', decisionRequestId, 'expected:', requestId);
+          return; // Not for this request
+        }
+        
+        decisionReceived = true;
+        clearInterval(checkDecision);
+        clearTimeout(timeoutId);
+        
+        if (decision === 'approve') {
+          console.log('[Web3 Antivirus] Transaction APPROVED by user, forwarding to MetaMask');
+          // Forward to original MetaMask provider
+          if (originalMetaMaskProvider) {
+            // Use the original provider directly without changing window.ethereum
+            // This way MetaMask won't detect that window.ethereum changed
+            originalMetaMaskProvider.request(args)
+              .then(result => {
+                console.log('[Web3 Antivirus] Transaction forwarded successfully');
+                resolve(result);
+              })
+              .catch(err => {
+                console.error('[Web3 Antivirus] Error forwarding transaction:', err);
+                reject(err);
+              });
+          } else {
+            // If no original provider, try to find MetaMask provider
+            // MetaMask might be in window.ethereum.providers array
+            if (window.ethereum && window.ethereum.providers) {
+              const metamaskProvider = window.ethereum.providers.find((p) => p.isMetaMask);
+              if (metamaskProvider) {
+                originalMetaMaskProvider = metamaskProvider;
+                metamaskProvider.request(args)
+                  .then(result => resolve(result))
+                  .catch(err => reject(err));
               } else {
                 reject(new Error('No wallet provider available'));
               }
+            } else {
+              reject(new Error('No wallet provider available'));
             }
-          } else {
-            console.log('[Web3 Antivirus] Transaction REJECTED by user');
-            reject(new Error('Transaction rejected by Web3 Antivirus'));
+          }
+        } else {
+          console.log('[Web3 Antivirus] Transaction REJECTED by user');
+          reject(new Error('Transaction rejected by Web3 Antivirus'));
+        }
+      }
+      
+      // Check for decision in window object
+      const checkDecision = setInterval(function() {
+        if (window._web3AntivirusDecision) {
+          const decision = window._web3AntivirusDecision.decision;
+          const decisionRequestId = window._web3AntivirusDecision.requestId;
+          
+          if (!decisionRequestId || decisionRequestId === requestId) {
+            delete window._web3AntivirusDecision;
+            processDecision(decision, decisionRequestId);
           }
         }
       }, 100);
       
+      // Also listen for postMessage events from content script
+      const messageHandler = function(event) {
+        if (event.data && event.data.type === 'WEB3_ANTIVIRUS_DECISION') {
+          const decision = event.data.decision;
+          const decisionRequestId = event.data.requestId;
+          
+          if (!decisionRequestId || decisionRequestId === requestId) {
+            window.removeEventListener('message', messageHandler);
+            processDecision(decision, decisionRequestId);
+          }
+        }
+      };
+      window.addEventListener('message', messageHandler);
+      
       // Timeout after 5 minutes
       timeoutId = setTimeout(function() {
         clearInterval(checkDecision);
-        console.warn('[Web3 Antivirus] Decision timeout, rejecting transaction');
-        reject(new Error('Transaction request timeout'));
+        window.removeEventListener('message', messageHandler);
+        if (!decisionReceived) {
+          console.warn('[Web3 Antivirus] Decision timeout, rejecting transaction');
+          reject(new Error('Transaction request timeout'));
+        }
       }, 300000);
     });
   }
   
-  // Block MetaMask popup by overriding window.open
-  function blockMetaMaskPopup() {
-    const originalOpen = window.open;
-    window.open = function(...args) {
-      const url = args[0];
-      // Block MetaMask popup URLs
-      if (url && (
-        url.includes('chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn') || // MetaMask extension ID
-        url.includes('metamask') ||
-        url.includes('popup.html') && url.includes('extension')
-      )) {
-        console.log('[Web3 Antivirus] Blocked MetaMask popup:', url);
-        return null; // Block the popup
-      }
-      // Allow other popups
-      return originalOpen.apply(window, args);
-    };
-    console.log('[Web3 Antivirus] MetaMask popup blocker installed');
-  }
+  // Don't block MetaMask popup - let it open normally
+  // We just want to intercept the transaction, not block MetaMask
   
   // Replace window.ethereum immediately
   function replaceMetaMaskProvider() {
@@ -276,8 +358,8 @@
     }
   }
   
-  // Block popup immediately
-  blockMetaMaskPopup();
+  // Don't block MetaMask popup - allow it to open normally
+  // We just intercept the transaction to show our analysis popup alongside
   
   // Try to replace immediately
   replaceMetaMaskProvider();

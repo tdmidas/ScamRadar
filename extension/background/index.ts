@@ -30,6 +30,9 @@ export default defineBackground(() => {
 });
 
 async function handleMetaMaskTransaction(transactionData: any, requestId?: string) {
+  // Reset any previous decision so the content script receives change events
+  await chrome.storage.local.remove(['transactionDecision']);
+
   // Store transaction data for popup/standalone window to access
   await chrome.storage.local.set({
     pendingTransaction: transactionData,

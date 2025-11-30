@@ -1,3 +1,5 @@
+import { defineContentScript } from 'wxt/sandbox';
+
 export default defineContentScript({
   matches: ['<all_urls>'],
   runAt: 'document_start',
@@ -16,13 +18,22 @@ export default defineContentScript({
   },
 });
 
+let injectScriptLoaded = false;
+
 function interceptMetaMaskTransactions() {
+  // Prevent multiple injections
+  if (injectScriptLoaded) {
+    console.log('[Web3 Antivirus] Inject script already loaded, skipping...');
+    return;
+  }
+  
   // Inject script file instead of inline script to bypass CSP
   // The file needs to be in web_accessible_resources
   const script = document.createElement('script');
   script.src = chrome.runtime.getURL('inject.js');
   script.onload = () => {
     console.log('[Web3 Antivirus] Inject script loaded successfully');
+    injectScriptLoaded = true;
     script.remove();
   };
   script.onerror = () => {
@@ -31,16 +42,66 @@ function interceptMetaMaskTransactions() {
   
   // Inject script ASAP
   (document.head || document.documentElement).prepend(script);
-  
-  // Also try after DOM ready as fallback
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      const script2 = document.createElement('script');
-      script2.src = chrome.runtime.getURL('inject.js');
-      (document.head || document.documentElement).prepend(script2);
-    });
-  }
 }
+
+// Listen for decision messages from popup (register once)
+chrome.storage.local.onChanged.addListener((changes) => {
+  if (changes.transactionDecision) {
+    const decision = changes.transactionDecision.newValue;
+    const requestId = changes.transactionRequestId?.newValue;
+    
+    console.log('[Web3 Antivirus] Decision received in content script:', decision, 'requestId:', requestId);
+    
+    // Send decision to page context via postMessage as well
+    window.postMessage({
+      type: 'WEB3_ANTIVIRUS_DECISION',
+      decision: decision,
+      requestId: requestId || ''
+    }, '*');
+    
+    // Also inject into page context for inject.js to read
+    const script = document.createElement('script');
+    script.textContent = `
+      window._web3AntivirusDecision = {
+        decision: '${decision}',
+        requestId: '${requestId || ''}'
+      };
+    `;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+  }
+});
+
+// Listen for direct messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'WEB3_ANTIVIRUS_DECISION') {
+    const decision = message.decision;
+    const requestId = message.requestId;
+    
+    console.log('[Web3 Antivirus] Direct decision message received:', decision, 'requestId:', requestId);
+    
+    // Send decision to page context via postMessage
+    window.postMessage({
+      type: 'WEB3_ANTIVIRUS_DECISION',
+      decision: decision,
+      requestId: requestId || ''
+    }, '*');
+    
+    // Also inject into page context for inject.js to read
+    const script = document.createElement('script');
+    script.textContent = `
+      window._web3AntivirusDecision = {
+        decision: '${decision}',
+        requestId: '${requestId || ''}'
+      };
+    `;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+    
+    sendResponse({ success: true });
+    return true;
+  }
+});
 
 // Listen for messages from injected script
 window.addEventListener('message', async (event) => {
@@ -70,27 +131,6 @@ window.addEventListener('message', async (event) => {
     
     // Note: Modal removed - only popup window will be shown
   }
-  
-  // Listen for decision messages from popup
-  chrome.storage.local.onChanged.addListener((changes) => {
-    if (changes.transactionDecision) {
-      const decision = changes.transactionDecision.newValue;
-      const requestId = changes.transactionRequestId?.newValue;
-      
-      console.log('[Web3 Antivirus] Decision received in content script:', decision, 'requestId:', requestId);
-      
-      // Send decision to page context
-      const script = document.createElement('script');
-      script.textContent = `
-        window._web3AntivirusDecision = {
-          decision: '${decision}',
-          requestId: '${requestId || ''}'
-        };
-      `;
-      (document.head || document.documentElement).appendChild(script);
-      script.remove();
-    }
-  });
 });
 
 console.log('[Web3 Antivirus] Message listener registered');

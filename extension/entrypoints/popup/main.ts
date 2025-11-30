@@ -15,6 +15,16 @@ const ethValueEl = document.getElementById('eth-value');
 const usdValueEl = document.getElementById('usd-value');
 const nftDetailEl = document.getElementById('nft-detail');
 const nftInfoEl = document.getElementById('nft-info');
+const nftSendInfoEl = document.getElementById('nft-send-info');
+const nftTokenIdEl = document.getElementById('nft-token-id');
+const nftContractEl = document.getElementById('nft-contract');
+const ethValueDisplayEl = document.getElementById('eth-value-display');
+const networkDisplayEl = document.getElementById('network-display');
+const requestFromDisplayEl = document.getElementById('request-from-display');
+const networkFeeDisplayEl = document.getElementById('network-fee-display');
+const gasPriceDisplayEl = document.getElementById('gas-price-display');
+const gasUsedDisplayEl = document.getElementById('gas-used-display');
+const etherscanWarningEl = document.getElementById('etherscan-warning');
 const accountRiskEl = document.getElementById('account-risk');
 const transactionRiskEl = document.getElementById('transaction-risk');
 const riskExplanationsEl = document.getElementById('risk-explanations');
@@ -44,12 +54,22 @@ console.log('[Web3 Antivirus] Popup loaded, isAlertMode:', isAlertMode);
 
 chrome.storage.local.get(['pendingTransaction', 'transactionTimestamp'], (result) => {
   console.log('[Web3 Antivirus] Storage result:', result);
+  console.log('[Web3 Antivirus] Transaction data:', JSON.stringify(result.pendingTransaction, null, 2));
   
   if (result.pendingTransaction) {
     // Check if transaction is recent (within last 30 seconds)
     const now = Date.now();
     const txTime = result.transactionTimestamp || 0;
     const isRecent = (now - txTime) < 30000; // 30 seconds
+    
+    console.log('[Web3 Antivirus] Transaction details:', {
+      from: result.pendingTransaction.from,
+      to: result.pendingTransaction.to,
+      data: result.pendingTransaction.data,
+      dataLength: result.pendingTransaction.data?.length,
+      isRecent,
+      isAlertMode
+    });
     
     if (isAlertMode || isRecent) {
       console.log('[Web3 Antivirus] Showing transaction view');
@@ -64,9 +84,205 @@ chrome.storage.local.get(['pendingTransaction', 'transactionTimestamp'], (result
   }
 });
 
+// Decode recipient address from NFT transfer calldata
+function extractRecipientAddressFromCalldata(data: string): string | null {
+  console.log('[Web3 Antivirus] extractRecipientAddressFromCalldata called with data:', data);
+  
+  if (!data || data === '0x' || data === '0x0') {
+    console.log('[Web3 Antivirus] No data or empty data');
+    return null;
+  }
+  
+  // Need at least 4 (selector) + 32 (from) + 32 (to) = 138 chars including 0x
+  if (data.length < 138) {
+    console.log('[Web3 Antivirus] Data too short:', data.length, 'expected at least 138');
+    return null;
+  }
+  
+  const sanitized = data.startsWith('0x') ? data.slice(2) : data;
+  if (sanitized.length < 136) {
+    console.log('[Web3 Antivirus] Sanitized data too short:', sanitized.length, 'expected at least 136');
+    return null;
+  }
+  
+  // Extract function selector (first 4 bytes = 8 hex chars)
+  const selector = `0x${sanitized.slice(0, 8).toLowerCase()}`;
+  console.log('[Web3 Antivirus] Function selector:', selector);
+  
+  // NFT transfer function selectors
+  const nftTransferSelectors = [
+    '0x23b872dd', // transferFrom(address,address,uint256)
+    '0x42842e0e', // safeTransferFrom(address,address,uint256)
+    '0xb88d4fde', // safeTransferFrom(address,address,uint256,bytes)
+  ];
+  
+  if (!nftTransferSelectors.includes(selector)) {
+    console.log('[Web3 Antivirus] Not an NFT transfer function selector');
+    return null; // Not an NFT transfer function
+  }
+  
+  // Extract recipient address (word 1: bytes 36-67 = hex chars 72-135)
+  // Skip selector (8 chars) + from address (64 chars) = start at char 72
+  const recipientHex = sanitized.slice(72, 136);
+  
+  console.log('[Web3 Antivirus] Extracted recipient hex (64 chars):', recipientHex);
+  console.log('[Web3 Antivirus] Recipient hex length:', recipientHex.length);
+  
+  // Address is padded with zeros, extract last 40 hex chars (20 bytes = address)
+  // The address is right-aligned in the 32-byte word
+  const addressHex = recipientHex.slice(-40); // Last 40 hex chars
+  const recipientAddress = `0x${addressHex}`;
+  
+  console.log('[Web3 Antivirus] Extracted address hex (40 chars):', addressHex);
+  console.log('[Web3 Antivirus] Extracted recipient address:', recipientAddress);
+  
+  // Validate address (should be 42 chars including 0x)
+  if (recipientAddress.length === 42 && recipientAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
+    const normalized = recipientAddress.toLowerCase();
+    console.log('[Web3 Antivirus] ✅ Valid recipient address found:', normalized);
+    return normalized;
+  }
+  
+  console.log('[Web3 Antivirus] ❌ Invalid recipient address format:', recipientAddress);
+  return null;
+}
+
+// Extract NFT info (token ID and contract address) from calldata
+function extractNFTInfo(data: string, contractAddress: string): { tokenId: string | null, contractAddress: string } | null {
+  console.log('[Web3 Antivirus] extractNFTInfo called with data:', data, 'contract:', contractAddress);
+  
+  if (!data || data === '0x' || data === '0x0') {
+    return null;
+  }
+  
+  const sanitized = data.startsWith('0x') ? data.slice(2) : data;
+  if (sanitized.length < 136) {
+    return null;
+  }
+  
+  // Extract function selector
+  const selector = `0x${sanitized.slice(0, 8).toLowerCase()}`;
+  
+  // NFT transfer function selectors
+  const nftTransferSelectors = [
+    '0x23b872dd', // transferFrom(address,address,uint256)
+    '0x42842e0e', // safeTransferFrom(address,address,uint256)
+    '0xb88d4fde', // safeTransferFrom(address,address,uint256,bytes)
+  ];
+  
+  if (!nftTransferSelectors.includes(selector)) {
+    return null;
+  }
+  
+  // Extract token ID (word 2: bytes 68-99 = hex chars 136-199)
+  // Skip selector (8) + from (64) + to (64) = start at char 136
+  if (sanitized.length < 200) {
+    return null;
+  }
+  
+  const tokenIdHex = sanitized.slice(136, 200);
+  const tokenId = BigInt(`0x${tokenIdHex}`).toString();
+  
+  console.log('[Web3 Antivirus] Extracted NFT info:', { tokenId, contractAddress });
+  
+  return { tokenId, contractAddress };
+}
+
+// Check Etherscan for phishing/scam warnings
+async function checkEtherscanWarning(address: string): Promise<boolean> {
+  if (!address || address.length !== 42) {
+    return false;
+  }
+  
+  try {
+    // Use CORS proxy or fetch directly (if extension has permissions)
+    const url = `https://etherscan.io/address/${address}`;
+    
+    // Try to fetch via background script or use CORS proxy
+    const response = await fetch(url, {
+      method: 'GET',
+      mode: 'no-cors', // This won't work for reading response, need alternative
+    });
+    
+    // Alternative: Use chrome.tabs API to scrape (requires background script)
+    // For now, we'll use a simple approach: try to detect via content script message
+    // Or use a CORS proxy service
+    
+    // Since direct fetch won't work due to CORS, we'll use chrome.runtime.sendMessage
+    // to ask background script to fetch
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        {
+          action: 'checkEtherscanWarning',
+          address: address
+        },
+        (response: any) => {
+          if (chrome.runtime.lastError) {
+            console.log('[Web3 Antivirus] Error checking Etherscan:', chrome.runtime.lastError);
+            resolve(false);
+          } else {
+            resolve(response?.hasWarning || false);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('[Web3 Antivirus] Error checking Etherscan warning:', error);
+    return false;
+  }
+}
+
+// Resolve transaction addresses (for NFT transfers, decode from calldata)
+function resolveTransactionAddresses(transactionData: any): { recipientAddress: string, contractAddress: string } {
+  const rawTo = transactionData.to || '';
+  const data = transactionData.data || '';
+  
+  console.log('[Web3 Antivirus] resolveTransactionAddresses - rawTo:', rawTo, 'data length:', data.length);
+  
+  // Try to extract recipient from calldata (for NFT transfers)
+  const decodedRecipient = extractRecipientAddressFromCalldata(data);
+  
+  // If we decoded a recipient from calldata, use it; otherwise use raw 'to' address
+  const recipientAddress = decodedRecipient || rawTo;
+  
+  // Contract address is always the 'to' field (the NFT contract)
+  const contractAddress = rawTo;
+  
+  console.log('[Web3 Antivirus] resolveTransactionAddresses result:', {
+    decodedRecipient,
+    recipientAddress,
+    contractAddress
+  });
+  
+  return { recipientAddress, contractAddress };
+}
+
 // Show transaction view
 async function showTransactionView(transactionData: any) {
   console.log('[Web3 Antivirus] showTransactionView called with data:', transactionData);
+  console.log('[Web3 Antivirus] Raw transaction data:', {
+    from: transactionData.from,
+    to: transactionData.to,
+    data: transactionData.data,
+    dataLength: transactionData.data?.length
+  });
+  
+  // Resolve recipient address (decode from calldata if NFT transfer)
+  const { recipientAddress, contractAddress } = resolveTransactionAddresses(transactionData);
+  
+  console.log('[Web3 Antivirus] Resolved addresses:', { 
+    rawTo: transactionData.to, 
+    recipientAddress, 
+    contractAddress,
+    willUseRecipient: recipientAddress !== transactionData.to
+  });
+  
+  // Force use decoded recipient if available
+  const finalRecipientAddress = recipientAddress && recipientAddress !== transactionData.to 
+    ? recipientAddress 
+    : transactionData.to;
+  
+  console.log('[Web3 Antivirus] Final recipient address to display:', finalRecipientAddress);
   
   // Remove hidden class and add active
   transactionView?.classList.remove('hidden');
@@ -76,24 +292,227 @@ async function showTransactionView(transactionData: any) {
   
   // Display transaction details
   if (fromAddressEl) fromAddressEl.textContent = formatAddress(transactionData.from || '');
-  if (toAddressEl) toAddressEl.textContent = formatAddress(transactionData.to || '');
   
-  const value = hexToEth(transactionData.value || '0x0');
-  if (ethValueEl) ethValueEl.textContent = value.toFixed(4);
-  if (usdValueEl) usdValueEl.textContent = `($${(value * 2000).toFixed(2)})`; // Approximate ETH price
-  
-  // Check if NFT transfer
-  const isNFT = transactionData.data && transactionData.data !== '0x' && transactionData.data.length > 10;
-  if (isNFT && nftDetailEl && nftInfoEl) {
-    nftDetailEl.style.display = 'block';
-    nftInfoEl.textContent = 'NFT Transfer Detected';
-  } else if (nftDetailEl) {
-    nftDetailEl.style.display = 'none';
+  // Always use resolved recipient address for display
+  const displayToAddress = finalRecipientAddress || transactionData.to || '';
+  console.log('[Web3 Antivirus] Displaying to address:', displayToAddress);
+  console.log('[Web3 Antivirus] toAddressEl element:', toAddressEl);
+  if (toAddressEl) {
+    toAddressEl.textContent = formatAddress(displayToAddress);
+    console.log('[Web3 Antivirus] ✅ toAddressEl updated with:', displayToAddress, 'formatted:', formatAddress(displayToAddress));
+  } else {
+    console.error('[Web3 Antivirus] ❌ toAddressEl is null!');
   }
   
-  // Set Etherscan link (moved to below to-address in HTML)
+  // Helper function to parse hex or decimal to BigInt
+  function parseToBigInt(value: string | number | undefined, defaultValue: bigint = BigInt(0)): bigint {
+    if (!value) return defaultValue;
+    if (typeof value === 'number') return BigInt(value);
+    if (typeof value === 'string' && value.startsWith('0x')) {
+      return BigInt(value);
+    }
+    if (typeof value === 'string') {
+      const parsed = parseInt(value, 10);
+      return isNaN(parsed) ? defaultValue : BigInt(parsed);
+    }
+    return defaultValue;
+  }
+  
+  // Helper function to get network name from chainId
+  function getNetworkName(chainId: string | number | undefined): string {
+    if (!chainId) return 'Unknown';
+    let chainIdNum: number;
+    if (typeof chainId === 'string') {
+      if (chainId.startsWith('0x')) {
+        chainIdNum = parseInt(chainId, 16);
+      } else {
+        chainIdNum = parseInt(chainId, 10);
+      }
+    } else {
+      chainIdNum = chainId;
+    }
+    
+    const networkMap: { [key: number]: string } = {
+      1: 'Ethereum',
+      5: 'Goerli',
+      11155111: 'Sepolia',
+      137: 'Polygon',
+      80001: 'Mumbai',
+      56: 'BSC',
+      97: 'BSC Testnet',
+      42161: 'Arbitrum',
+      10: 'Optimism'
+    };
+    
+    return networkMap[chainIdNum] || `Chain ${chainIdNum}`;
+  }
+  
+  // Display "You send" section
+  const value = hexToEth(transactionData.value || '0x0');
+  const isNFT = transactionData.data && transactionData.data !== '0x' && transactionData.data.length > 10;
+  
+  if (isNFT) {
+    // Show NFT info in "You send" section
+    const nftInfo = extractNFTInfo(transactionData.data, contractAddress);
+    if (nftInfo && nftSendInfoEl && nftTokenIdEl && nftContractEl) {
+      if (ethValueDisplayEl) ethValueDisplayEl.style.display = 'none';
+      nftSendInfoEl.style.display = 'block';
+      nftTokenIdEl.textContent = `#${nftInfo.tokenId}`;
+      nftContractEl.textContent = formatAddress(nftInfo.contractAddress);
+    } else {
+      if (ethValueDisplayEl) ethValueDisplayEl.style.display = 'flex';
+      if (nftSendInfoEl) nftSendInfoEl.style.display = 'none';
+      if (ethValueEl) ethValueEl.textContent = value.toFixed(4);
+      if (usdValueEl) usdValueEl.textContent = `($${(value * 2000).toFixed(2)})`;
+    }
+  } else {
+    // Show ETH value
+    if (ethValueDisplayEl) ethValueDisplayEl.style.display = 'flex';
+    if (nftSendInfoEl) nftSendInfoEl.style.display = 'none';
+    if (ethValueEl) ethValueEl.textContent = value.toFixed(4);
+    if (usdValueEl) usdValueEl.textContent = `($${(value * 2000).toFixed(2)})`;
+  }
+  
+  // Display network
+  const chainId = transactionData.chainId || '0x1';
+  const networkName = getNetworkName(chainId);
+  if (networkDisplayEl) {
+    networkDisplayEl.textContent = networkName;
+  }
+  
+  // Display request from (origin) - try to get from active tab
+  if (requestFromDisplayEl) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs[0] && tabs[0].url) {
+        try {
+          const url = new URL(tabs[0].url);
+          // Only show hostname if it's not a chrome-extension:// URL
+          if (url.protocol === 'chrome-extension:') {
+            // Try to get the original tab that initiated the transaction
+            // For now, show a more user-friendly message
+            requestFromDisplayEl.textContent = 'Extension';
+          } else {
+            requestFromDisplayEl.textContent = url.hostname;
+          }
+        } catch {
+          // If origin is an extension ID, show something more user-friendly
+          const origin = transactionData.origin || 'Unknown';
+          if (origin.length === 32 && !origin.includes('.')) {
+            // Likely an extension ID
+            requestFromDisplayEl.textContent = 'Extension';
+          } else {
+            requestFromDisplayEl.textContent = origin;
+          }
+        }
+      } else {
+        // If origin is an extension ID, show something more user-friendly
+        const origin = transactionData.origin || 'Unknown';
+        if (origin.length === 32 && !origin.includes('.')) {
+          // Likely an extension ID
+          requestFromDisplayEl.textContent = 'Extension';
+        } else {
+          requestFromDisplayEl.textContent = origin;
+        }
+      }
+    });
+  }
+  
+  // Calculate and display network fee (gas price * gas limit)
+  const gasPrice = transactionData.gasPrice || transactionData.maxFeePerGas || transactionData.maxPriorityFeePerGas || '0x0';
+  const gasLimit = transactionData.gas || transactionData.gasLimit || '0x0';
+  const gasUsed = transactionData.gasUsed || gasLimit; // Use gasUsed if available, otherwise use gasLimit
+  
+  console.log('[Web3 Antivirus] Gas price raw value:', gasPrice, 'type:', typeof gasPrice);
+  
+  try {
+    const gasPriceWei = parseToBigInt(gasPrice);
+    const gasLimitWei = parseToBigInt(gasLimit);
+    const gasUsedWei = parseToBigInt(gasUsed);
+    const totalFeeWei = gasPriceWei * gasLimitWei;
+    const totalFeeEth = Number(totalFeeWei) / 1e18;
+    
+    console.log('[Web3 Antivirus] Gas price parsed:', {
+      raw: gasPrice,
+      wei: gasPriceWei.toString(),
+      gwei: Number(gasPriceWei) / 1e9
+    });
+    
+    // Display network fee
+    if (networkFeeDisplayEl) {
+      if (totalFeeEth > 0 && isFinite(totalFeeEth)) {
+        networkFeeDisplayEl.textContent = `${totalFeeEth.toFixed(6)} ${networkName}ETH`;
+      } else {
+        networkFeeDisplayEl.textContent = `0 ${networkName}ETH`;
+      }
+    }
+    
+    // Display gas price in gwei
+    if (gasPriceDisplayEl) {
+      if (gasPriceWei > BigInt(0)) {
+        const gasPriceGwei = Number(gasPriceWei) / 1e9;
+        console.log('[Web3 Antivirus] Gas price in gwei:', gasPriceGwei);
+        
+        if (gasPriceGwei >= 1000) {
+          gasPriceDisplayEl.textContent = `${(gasPriceGwei / 1000).toFixed(2)}k gwei`;
+        } else if (gasPriceGwei < 0.00000001) {
+          // For very small values, show in wei
+          gasPriceDisplayEl.textContent = `${Number(gasPriceWei).toLocaleString()} wei`;
+        } else if (gasPriceGwei < 0.01) {
+          // Show with more decimal places for small values
+          gasPriceDisplayEl.textContent = `${gasPriceGwei.toFixed(8)} gwei`;
+        } else {
+          gasPriceDisplayEl.textContent = `${gasPriceGwei.toFixed(2)} gwei`;
+        }
+      } else {
+        gasPriceDisplayEl.textContent = '0.00000000 gwei';
+      }
+    }
+    
+    // Display gas used
+    if (gasUsedDisplayEl) {
+      if (gasUsedWei > BigInt(0)) {
+        const gasUsedNum = Number(gasUsedWei);
+        if (gasUsedNum >= 1000000) {
+          gasUsedDisplayEl.textContent = `${(gasUsedNum / 1000000).toFixed(2)}M`;
+        } else if (gasUsedNum >= 1000) {
+          gasUsedDisplayEl.textContent = `${(gasUsedNum / 1000).toFixed(2)}k`;
+        } else {
+          gasUsedDisplayEl.textContent = gasUsedNum.toLocaleString();
+        }
+      } else {
+        gasUsedDisplayEl.textContent = '0';
+      }
+    }
+  } catch (error) {
+    console.error('[Web3 Antivirus] Error calculating gas info:', error);
+    if (networkFeeDisplayEl) {
+      networkFeeDisplayEl.textContent = `0 ${networkName}ETH`;
+    }
+    if (gasPriceDisplayEl) {
+      gasPriceDisplayEl.textContent = '0 gwei';
+    }
+    if (gasUsedDisplayEl) {
+      gasUsedDisplayEl.textContent = '0';
+    }
+  }
+  
+  // Check Etherscan warning for recipient address
+  if (finalRecipientAddress && etherscanWarningEl) {
+    checkEtherscanWarning(finalRecipientAddress).then(hasWarning => {
+      if (hasWarning && etherscanWarningEl) {
+        etherscanWarningEl.style.display = 'block';
+      } else if (etherscanWarningEl) {
+        etherscanWarningEl.style.display = 'none';
+      }
+    }).catch(err => {
+      console.error('[Web3 Antivirus] Error checking Etherscan warning:', err);
+    });
+  }
+  
+  // Set Etherscan link to recipient address
   if (etherscanLinkEl && etherscanLinkEl instanceof HTMLAnchorElement) {
-    etherscanLinkEl.href = `https://etherscan.io/address/${transactionData.to || ''}`;
+    etherscanLinkEl.href = `https://etherscan.io/address/${finalRecipientAddress || transactionData.to || ''}`;
+    console.log('[Web3 Antivirus] Etherscan link set to:', etherscanLinkEl.href);
   }
   
   // Hide warning section initially (will show after analysis)
@@ -102,8 +521,8 @@ async function showTransactionView(transactionData: any) {
     warningSection.style.display = 'none';
   }
   
-  // Analyze transaction
-  await analyzeTransactionForPopup(transactionData);
+  // Analyze transaction (pass resolved addresses)
+  await analyzeTransactionForPopup(transactionData, finalRecipientAddress, contractAddress);
 }
 
 // Show default view
@@ -115,16 +534,42 @@ function showDefaultView() {
 }
 
 // Analyze transaction for popup
-async function analyzeTransactionForPopup(transactionData: any) {
+async function analyzeTransactionForPopup(transactionData: any, recipientAddress?: string, contractAddress?: string) {
   showLoading('risk-explanations');
   
+  // Show loading for account risk
+  if (accountRiskEl) {
+    accountRiskEl.innerHTML = `
+      <div class="score-label">Account Risk</div>
+      <div class="score-value loading">
+        <div class="loading-spinner"></div>
+      </div>
+    `;
+  }
+  
+  // Show loading for transaction risk
+  if (transactionRiskEl) {
+    transactionRiskEl.innerHTML = `
+      <div class="score-label">Transaction Risk</div>
+      <div class="score-value loading">
+        <div class="loading-spinner"></div>
+      </div>
+    `;
+  }
+  
   try {
-    // Try to analyze account first
-    const accountResult = await fetch(`${API_BASE_URL}/detect`, {
+    // Use resolved recipient address if provided, otherwise resolve it
+    const resolvedRecipient = recipientAddress || resolveTransactionAddresses(transactionData).recipientAddress;
+    const resolvedContract = contractAddress || resolveTransactionAddresses(transactionData).contractAddress;
+    
+    console.log('[Web3 Antivirus] Analyzing account:', resolvedRecipient);
+    
+    // Analyze account (recipient address) using /detect/account endpoint
+    const accountResult = await fetch(`${API_BASE_URL}/detect/account`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        account_address: transactionData.from || '',
+        account_address: resolvedRecipient,
         explain: true,
         explain_with_llm: true
       })
@@ -132,20 +577,29 @@ async function analyzeTransactionForPopup(transactionData: any) {
     
     const accountData = await accountResult.json();
     
-    // Check if account has no transactions
-    if (accountData.detection_mode === 'no_data' || !accountData.account_scam_probability) {
-      // Use transaction-level detection only
-      const txResult = await analyzeTransactionOnly(transactionData);
+    // Check if account has no NFT transactions (ERC721/ERC1155)
+    if (accountData.detection_mode === 'no_data') {
+      // Account has no ERC721/ERC1155 transactions - show N/A
+      if (accountRiskEl) {
+        accountRiskEl.innerHTML = `
+          <div class="score-label">Account Risk</div>
+          <div class="score-value na">N/A<br/><span style="font-size: 10px;">New Account</span></div>
+        `;
+      }
+      
+      // Analyze transaction only (pass resolved addresses)
+      const { recipientAddress: resolvedRecipient, contractAddress: resolvedContract } = resolveTransactionAddresses(transactionData);
+      const txResult = await analyzeTransactionOnly(transactionData, accountData, resolvedRecipient, resolvedContract);
       displayRiskExplanations(accountData, txResult);
       return;
     }
     
-    // Display account risk
+    // Account has transactions - display account risk
     const accountRisk = accountData.account_scam_probability || 0;
     updateRiskDisplay(accountRiskEl, accountRisk, 'Account Risk');
     
-    // Analyze transaction
-    const txResult = await analyzeTransactionOnly(transactionData, accountData);
+    // Analyze transaction (pass resolved addresses)
+    const txResult = await analyzeTransactionOnly(transactionData, accountData, resolvedRecipient, resolvedContract);
     
     // Display transaction risk
     const txRisk = txResult.transaction_scam_probability || 0;
@@ -162,6 +616,19 @@ async function analyzeTransactionForPopup(transactionData: any) {
     hideLoading('risk-explanations');
     if (riskExplanationsEl) {
       riskExplanationsEl.innerHTML = '<div class="risk-item warning">Error analyzing transaction. Please try again.</div>';
+    }
+    // Show error in risk displays
+    if (accountRiskEl) {
+      accountRiskEl.innerHTML = `
+        <div class="score-label">Account Risk</div>
+        <div class="score-value">Error</div>
+      `;
+    }
+    if (transactionRiskEl) {
+      transactionRiskEl.innerHTML = `
+        <div class="score-label">Transaction Risk</div>
+        <div class="score-value">Error</div>
+      `;
     }
   } finally {
     hideLoading('risk-explanations');
@@ -208,18 +675,25 @@ function showWarningSection(txRisk: number, accountRisk: number | null) {
 }
 
 // Analyze transaction only (for new accounts)
-async function analyzeTransactionOnly(transactionData: any, accountData?: any) {
+async function analyzeTransactionOnly(transactionData: any, accountData?: any, recipientAddress?: string, contractAddress?: string) {
+  // Use resolved addresses if provided, otherwise resolve them
+  const resolvedRecipient = recipientAddress || resolveTransactionAddresses(transactionData).recipientAddress;
+  const resolvedContract = contractAddress || resolveTransactionAddresses(transactionData).contractAddress;
+  
+  console.log('[Web3 Antivirus] Transaction analysis - recipient:', resolvedRecipient, 'contract:', resolvedContract);
+  
   const response = await fetch(`${API_BASE_URL}/detect/transaction`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       from_address: transactionData.from || '',
-      to_address: transactionData.to || '',
+      to_address: resolvedRecipient, // Use resolved recipient address
       value: transactionData.value || '0x0',
       gasPrice: transactionData.gasPrice || '0x0',
       gasUsed: transactionData.gas || '0x0',
       function_call: extractFunctions(transactionData.data),
-      contract_address: transactionData.to || null,
+      input: transactionData.data || '0x',
+      contract_address: resolvedContract, // Use resolved contract address
       token_value: '0',
       explain: true,
       explain_with_llm: true
@@ -228,14 +702,11 @@ async function analyzeTransactionOnly(transactionData: any, accountData?: any) {
   
   const result = await response.json();
   
-  // If account has no data, hide account risk
-  if (!accountData || accountData.detection_mode === 'no_data') {
-    if (accountRiskEl) {
-      accountRiskEl.innerHTML = `
-        <div class="score-label">Account Risk</div>
-        <div class="score-value na">N/A<br/><span style="font-size: 10px;">New Account</span></div>
-      `;
-    }
+  // Account risk display is handled in analyzeTransactionForPopup
+  // Only update if accountData is provided and has data
+  if (accountData && accountData.detection_mode !== 'no_data' && accountData.account_scam_probability !== undefined) {
+    const accountRisk = accountData.account_scam_probability || 0;
+    updateRiskDisplay(accountRiskEl, accountRisk, 'Account Risk');
   }
   
   const txRisk = result.transaction_scam_probability || 0;
@@ -251,65 +722,151 @@ async function analyzeTransactionOnly(transactionData: any, accountData?: any) {
   return result;
 }
 
-// Display risk explanations
+// Display risk explanations with correct format: [Risk_tag_box] - [feature_box] - value, then explanation
+// Priority: LLM explanations first, then SHAP only if LLM not available
 function displayRiskExplanations(accountData: any, txData: any) {
   if (!riskExplanationsEl) return;
   
   let html = '';
+  const processedFeatures = new Set(); // Track processed features to avoid duplicates
   
-  // Account explanations (new format: {feature_name, feature_value, reason})
+  // Account LLM explanations (highest priority)
   if (accountData.llm_explanations?.account) {
     const accountExpl = accountData.llm_explanations.account;
-    // Check if it's new format (object) or old format (string)
     if (typeof accountExpl === 'object' && accountExpl.feature_name) {
-      html += `<div class="risk-item ${getRiskClass(accountData.account_scam_probability)}">
-        <div class="risk-item-title">${accountExpl.feature_name} ${accountExpl.feature_value}</div>
-        <div class="risk-item-desc">${accountExpl.reason}</div>
-      </div>`;
-    } else if (typeof accountExpl === 'string') {
-      // Fallback for old format
-      html += `<div class="risk-item ${getRiskClass(accountData.account_scam_probability)}">
-        <div class="risk-item-title">Account Risk Analysis</div>
-        <div class="risk-item-desc">${accountExpl}</div>
+      const featureName = formatFeatureName(accountExpl.feature_name);
+      const featureValue = parseFloat(accountExpl.feature_value) || 0;
+      const formattedValue = formatNumber(featureValue, accountExpl.feature_name);
+      
+      // Get SHAP value from explanations if available
+      const shapValue = accountData.explanations?.account?.feature_importance?.find(
+        (f: any) => f.feature_name === accountExpl.feature_name
+      )?.shap_value || 0;
+      
+      // Calculate feature-specific risk level
+      const featureRisk = getFeatureRiskLevel(shapValue, featureValue, accountExpl.feature_name);
+      const riskLevel = featureRisk.level;
+      const riskClass = featureRisk.class;
+      
+      const numericalDetails = formatNumericalDetails(accountExpl.feature_name, featureValue, accountData, null);
+      
+      // Embed transaction count in explanation if available
+      let explanationText = accountExpl.reason || 'No explanation available.';
+      if (accountData && accountData.transactions_count && accountData.transactions_count > 1) {
+        // Insert transaction count into the explanation text naturally
+        explanationText = explanationText.replace(/\.$/, ` (based on ${accountData.transactions_count} transactions).`);
+      }
+      
+      processedFeatures.add(accountExpl.feature_name);
+      
+      html += `<div class="risk-item ${riskClass}">
+        <div class="risk-header-row">
+          <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+          <span class="risk-feature-box">${featureName}</span>
+        </div>
+        <div class="risk-item-desc">${explanationText}</div>
+        ${numericalDetails && numericalDetails.trim() ? `<div class="risk-numerical-details">${numericalDetails}</div>` : ''}
       </div>`;
     }
   }
   
-  // Transaction explanations (new format: {feature_name, feature_value, reason})
+  // Transaction LLM explanations (highest priority)
   if (txData.llm_explanations?.transaction) {
     const txExpl = txData.llm_explanations.transaction;
-    // Check if it's new format (object) or old format (string)
-    if (typeof txExpl === 'object' && txExpl.feature_name) {
-      html += `<div class="risk-item ${getRiskClass(txData.transaction_scam_probability)}">
-        <div class="risk-item-title">${txExpl.feature_name} ${txExpl.feature_value}</div>
-        <div class="risk-item-desc">${txExpl.reason}</div>
-      </div>`;
-    } else if (typeof txExpl === 'string') {
-      // Fallback for old format
-      html += `<div class="risk-item ${getRiskClass(txData.transaction_scam_probability)}">
-        <div class="risk-item-title">Transaction Risk Analysis</div>
-        <div class="risk-item-desc">${txExpl}</div>
+    if (typeof txExpl === 'object' && txExpl.feature_name && !processedFeatures.has(txExpl.feature_name)) {
+      const featureName = formatFeatureName(txExpl.feature_name);
+      const featureValue = parseFloat(txExpl.feature_value) || 0;
+      const formattedValue = formatNumber(featureValue, txExpl.feature_name);
+      
+      // Get SHAP value from explanations if available
+      const shapValue = txData.explanations?.transaction?.feature_importance?.find(
+        (f: any) => f.feature_name === txExpl.feature_name
+      )?.shap_value || 0;
+      
+      // Calculate feature-specific risk level
+      const featureRisk = getFeatureRiskLevel(shapValue, featureValue, txExpl.feature_name);
+      const riskLevel = featureRisk.level;
+      const riskClass = featureRisk.class;
+      
+      const numericalDetails = formatNumericalDetails(txExpl.feature_name, featureValue, null, txData);
+      
+      processedFeatures.add(txExpl.feature_name);
+      
+      html += `<div class="risk-item ${riskClass}">
+        <div class="risk-header-row">
+          <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+          <span class="risk-feature-box">${featureName}</span>
+        </div>
+        <div class="risk-item-desc">${txExpl.reason || 'No explanation available.'}</div>
+        ${numericalDetails && numericalDetails.trim() ? `<div class="risk-numerical-details">${numericalDetails}</div>` : ''}
       </div>`;
     }
   }
   
-  // Feature highlights
+  // SHAP/gradient explanations (only if LLM explanation not available for that feature)
   if (accountData.explanations?.account?.feature_importance) {
     const topFeature = accountData.explanations.account.feature_importance[0];
-    if (topFeature) {
-      html += `<div class="risk-item ${topFeature.shap_value > 0 ? 'critical' : 'warning'}">
-        <div class="risk-item-title">⚠️ Critical: ${formatFeatureName(topFeature.feature_name)}</div>
-        <div class="risk-item-desc">This account's ${formatFeatureName(topFeature.feature_name).toLowerCase()} (${topFeature.feature_value.toFixed(2)}) is ${topFeature.shap_value > 0 ? 'significantly increasing risk' : 'affecting risk assessment'}</div>
+    if (topFeature && !processedFeatures.has(topFeature.feature_name)) {
+      const featureName = formatFeatureName(topFeature.feature_name);
+      const formattedValue = formatNumber(topFeature.feature_value, topFeature.feature_name);
+      
+      // Calculate feature-specific risk level
+      const featureRisk = getFeatureRiskLevel(topFeature.shap_value, topFeature.feature_value, topFeature.feature_name);
+      const riskLevel = featureRisk.level;
+      const riskClass = featureRisk.class;
+      
+      const numericalDetails = formatNumericalDetails(topFeature.feature_name, topFeature.feature_value, accountData, null);
+      
+      processedFeatures.add(topFeature.feature_name);
+      
+      // Generate natural explanation with value embedded
+      let shapExplanation = topFeature.shap_value > 0 
+        ? `This account has ${featureName.toLowerCase()} of ${formattedValue}, which significantly increases risk and may indicate malicious activity.`
+        : `This account's ${featureName.toLowerCase()} (${formattedValue}) is affecting risk assessment.`;
+      
+      // Embed transaction count in explanation if available
+      if (accountData && accountData.transactions_count && accountData.transactions_count > 1) {
+        shapExplanation = shapExplanation.replace(/\.$/, ` (based on ${accountData.transactions_count} transactions).`);
+      }
+      
+      html += `<div class="risk-item ${riskClass}">
+        <div class="risk-header-row">
+          <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+          <span class="risk-feature-box">${featureName}</span>
+        </div>
+        <div class="risk-item-desc">${shapExplanation}</div>
+        ${numericalDetails && numericalDetails.trim() ? `<div class="risk-numerical-details">${numericalDetails}</div>` : ''}
       </div>`;
     }
   }
   
   if (txData.explanations?.transaction?.feature_importance) {
     const topFeature = txData.explanations.transaction.feature_importance[0];
-    if (topFeature) {
-      html += `<div class="risk-item ${topFeature.shap_value > 0 ? 'critical' : 'warning'}">
-        <div class="risk-item-title">⚡ Transaction Risk: ${formatFeatureName(topFeature.feature_name)}</div>
-        <div class="risk-item-desc">This transaction shows ${formatFeatureName(topFeature.feature_name).toLowerCase()} which ${topFeature.shap_value > 0 ? 'indicates high risk' : 'may be suspicious'}</div>
+    if (topFeature && !processedFeatures.has(topFeature.feature_name)) {
+      const featureName = formatFeatureName(topFeature.feature_name);
+      const formattedValue = formatNumber(topFeature.feature_value, topFeature.feature_name);
+      
+      // Calculate feature-specific risk level
+      const featureRisk = getFeatureRiskLevel(topFeature.shap_value, topFeature.feature_value, topFeature.feature_name);
+      const riskLevel = featureRisk.level;
+      const riskClass = featureRisk.class;
+      
+      const numericalDetails = formatNumericalDetails(topFeature.feature_name, topFeature.feature_value, null, txData);
+      
+      processedFeatures.add(topFeature.feature_name);
+      
+      // Generate natural explanation with value embedded
+      const shapExplanation = topFeature.shap_value > 0
+        ? `This transaction has ${featureName.toLowerCase()} of ${formattedValue}, which indicates high risk and may be a phishing attempt.`
+        : `This transaction's ${featureName.toLowerCase()} (${formattedValue}) may be suspicious.`;
+      
+      html += `<div class="risk-item ${riskClass}">
+        <div class="risk-header-row">
+          <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+          <span class="risk-feature-box">${featureName}</span>
+        </div>
+        <div class="risk-item-desc">${shapExplanation}</div>
+        ${numericalDetails && numericalDetails.trim() ? `<div class="risk-numerical-details">${numericalDetails}</div>` : ''}
       </div>`;
     }
   }
@@ -365,11 +922,134 @@ function extractFunctions(data: string): string[] {
 function formatFeatureName(name: string): string {
   const map: Record<string, string> = {
     'activity_duration_days': 'Activity Duration',
-    'avg_gas_price': 'Average Gas Price',
+    'avg_gas_price': 'Average Transaction Fee',
+    'gas_price': 'Transaction Fee',
+    'gas_used': 'Gas Used',
+    'value': 'Transaction Value',
     'has_suspicious_func': 'Suspicious Functions',
     'is_mint': 'Mint Transaction',
+    'nft_num_owners': 'NFT Owners',
+    'nft_total_volume': 'NFT Total Volume',
+    'token_value': 'Token Value',
+    'is_zero_value': 'Zero Value',
+    'high_gas': 'High Gas',
+    'num_functions': 'Function Calls',
   };
   return map[name] || name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+}
+
+// Format number with commas and appropriate units
+function formatNumber(value: number, featureName: string): string {
+  // Handle invalid/negative values
+  if (value < 0) {
+    // Negative values are invalid, treat as 0
+    value = 0;
+  }
+  
+  // Handle zero values
+  if (value === 0) {
+    // For gas price, show specific 0 value
+    if (featureName.includes('gas_price') || featureName.includes('gasPrice')) {
+      return '0.00000000 gwei';
+    }
+    return '0';
+  }
+  
+  // Gas price in gwei
+  if (featureName.includes('gas_price') || featureName.includes('gasPrice')) {
+    const gwei = value / 1e9;
+    if (gwei >= 1000) {
+      return `${(gwei / 1000).toFixed(2)}k gwei`;
+    }
+    if (gwei < 0.00000001) {
+      // Very small values, show in wei
+      return `${value.toLocaleString()} wei`;
+    }
+    if (gwei < 0.01) {
+      // Small values, show with more decimal places for precision
+      return `${gwei.toFixed(8)} gwei`;
+    }
+    return `${gwei.toFixed(2)} gwei`;
+  }
+  
+  // Gas used
+  if (featureName.includes('gas_used') || featureName.includes('gasUsed')) {
+    if (value >= 1000000) {
+      return `${(value / 1000000).toFixed(2)}M`;
+    }
+    if (value >= 1000) {
+      return `${(value / 1000).toFixed(2)}k`;
+    }
+    return Math.round(value).toLocaleString();
+  }
+  
+  // ETH value
+  if (featureName.includes('value') && !featureName.includes('token')) {
+    const eth = value / 1e18;
+    if (eth >= 1) {
+      return `${eth.toFixed(4)} ETH`;
+    }
+    return `${(eth * 1000).toFixed(2)} mETH`;
+  }
+  
+  // Large numbers with commas
+  if (value >= 1000000) {
+    return `${(value / 1000000).toFixed(2)}M`;
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(2)}k`;
+  }
+  
+  // Format with commas
+  return Math.round(value).toLocaleString();
+}
+
+// Get normal/expected values for comparison
+function getNormalValue(featureName: string): { value: number; unit: string; source: string } {
+  const normalValues: Record<string, { value: number; unit: string; source: string }> = {
+    'gas_price': { value: 30e9, unit: 'gwei', source: 'https://etherscan.io/gastracker' },
+    'avg_gas_price': { value: 30e9, unit: 'gwei', source: 'https://etherscan.io/gastracker' },
+    'gas_used': { value: 21000, unit: '', source: 'https://ethereum.org/en/developers/docs/gas/' },
+    'value': { value: 0, unit: 'ETH', source: '' },
+  };
+  
+  return normalValues[featureName] || { value: 0, unit: '', source: '' };
+}
+
+// Compare value with normal and generate comparison text
+function generateComparisonText(featureName: string, featureValue: number, shapValue: number): string {
+  const normal = getNormalValue(featureName);
+  if (!normal.value || normal.value === 0) {
+    return '';
+  }
+  
+  let comparison = '';
+  const ratio = featureValue / normal.value;
+  
+  if (featureName.includes('gas_price') || featureName.includes('gasPrice')) {
+    const normalGwei = normal.value / 1e9;
+    const valueGwei = featureValue / 1e9;
+    
+    if (ratio > 10) {
+      comparison = `This gas price (${formatNumber(featureValue, featureName)}) is ${ratio.toFixed(1)}x higher than the normal range (${normalGwei.toFixed(0)} gwei).`;
+    } else if (ratio < 0.1) {
+      comparison = `This gas price (${formatNumber(featureValue, featureName)}) is unusually low compared to the normal range (${normalGwei.toFixed(0)} gwei).`;
+    } else {
+      comparison = `Gas price (${formatNumber(featureValue, featureName)}) is within normal range (${normalGwei.toFixed(0)} gwei).`;
+    }
+    
+    if (normal.source) {
+      comparison += ` See <a href="${normal.source}" target="_blank" class="reference-link">current gas prices</a>.`;
+    }
+  } else if (featureName.includes('gas_used') || featureName.includes('gasUsed')) {
+    if (ratio > 5) {
+      comparison = `Gas used (${formatNumber(featureValue, featureName)}) is ${ratio.toFixed(1)}x higher than a standard transfer (${formatNumber(normal.value, featureName)}).`;
+    } else if (featureValue < normal.value * 0.5) {
+      comparison = `Gas used (${formatNumber(featureValue, featureName)}) is lower than expected for a standard transfer (${formatNumber(normal.value, featureName)}).`;
+    }
+  }
+  
+  return comparison;
 }
 
 function getRiskClass(risk: number | null | undefined): string {
@@ -377,6 +1057,66 @@ function getRiskClass(risk: number | null | undefined): string {
   if (risk > 0.7) return 'critical';
   if (risk > 0.4) return 'warning';
   return 'low';
+}
+
+function getRiskLevelText(risk: number | null | undefined): string {
+  if (!risk) return 'LESS RISKY';
+  if (risk > 0.7) return 'HIGH';
+  if (risk > 0.4) return 'MEDIUM';
+  return 'LESS RISKY';
+}
+
+// Calculate feature-specific risk level based on SHAP value and feature value
+function getFeatureRiskLevel(shapValue: number, featureValue: number, featureName: string): { level: string; class: string } {
+  // If SHAP value is positive, it increases risk
+  if (shapValue > 0.1) {
+    // High positive SHAP = high risk
+    if (shapValue > 0.3) {
+      return { level: 'HIGH', class: 'critical' };
+    }
+    return { level: 'MEDIUM', class: 'warning' };
+  }
+  
+  // Check for suspicious feature values even with low SHAP
+  // Zero gas price is suspicious ONLY if SHAP is positive or neutral (not negative)
+  // If SHAP is negative, 0 gwei actually decreases risk (gasless relay is less risky)
+  if (featureName.includes('gas_price') || featureName.includes('gasPrice')) {
+    if ((featureValue === 0 || featureValue < 1e6) && shapValue >= 0) {
+      return { level: 'HIGH', class: 'critical' };
+    }
+    // If SHAP is negative and gas price is 0, it's actually less risky
+    if ((featureValue === 0 || featureValue < 1e6) && shapValue < 0) {
+      return { level: 'LESS RISKY', class: 'low' };
+    }
+  }
+  
+  // Zero value transactions are suspicious
+  if (featureName.includes('value') && featureValue === 0) {
+    return { level: 'MEDIUM', class: 'warning' };
+  }
+  
+  // Negative SHAP or neutral = low risk
+  return { level: 'LESS RISKY', class: 'low' };
+}
+
+function formatNumericalDetails(featureName: string, featureValue: number, accountData?: any, txData?: any): string {
+  const details: string[] = [];
+  
+  // Only show meaningful numerical details
+  // Don't show $0.00 or transaction counts that don't add value
+  
+  // Format value if applicable and meaningful (only for value/volume/price features with non-zero values)
+  if ((featureName.includes('value') || featureName.includes('volume') || featureName.includes('price')) && featureValue > 0) {
+    const usdValue = (featureValue / 1e18) * 2000; // Approximate ETH price
+    if (usdValue >= 0.01) { // Only show if >= 1 cent
+      details.push(`$${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    }
+  }
+  
+  // Transaction count will be embedded in the explanation text, not shown separately
+  // Return empty string to avoid showing "243 txs" separately
+  
+  return details.length > 0 ? details.join(' • ') : '';
 }
 
 function showLoading(elementId: string) {
@@ -392,16 +1132,123 @@ function hideLoading(elementId: string) {
   // This function is mainly for error cases
 }
 
+// Progress bar functions for account/transaction analysis
+function showProgressBar(scoreElementId: string, explanationElementId: string) {
+  const scoreEl = document.getElementById(scoreElementId);
+  const explanationEl = document.getElementById(explanationElementId);
+  
+  // Only show progress bar in explanation element to avoid duplicate display
+  // Score element will show loading spinner
+  if (scoreEl) {
+    // Clear any existing classes that might interfere
+    scoreEl.className = '';
+    scoreEl.innerHTML = `
+      <div class="loading">
+        <div class="spinner"></div>
+      </div>
+    `;
+  }
+  
+  if (explanationEl) {
+    // Clear any existing classes that might interfere
+    explanationEl.className = '';
+    explanationEl.innerHTML = `
+      <div class="progress-container">
+        <div class="progress-bar-wrapper">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill-${explanationElementId}" style="width: 5%;"></div>
+            <div class="progress-shine" id="progress-shine-${explanationElementId}"></div>
+          </div>
+          <div class="progress-text" id="progress-text-${explanationElementId}">Initializing analysis...</div>
+        </div>
+      </div>
+    `;
+    // Small delay to ensure DOM is updated
+    setTimeout(() => {
+      animateProgressBar(`progress-fill-${explanationElementId}`, `progress-text-${explanationElementId}`, `progress-shine-${explanationElementId}`);
+    }, 50);
+  }
+}
+
+function hideProgressBar(scoreElementId: string, explanationElementId: string) {
+  const scoreEl = document.getElementById(scoreElementId);
+  const explanationEl = document.getElementById(explanationElementId);
+  
+  // Progress bar will be replaced by actual results
+  // No need to clear here
+}
+
+function animateProgressBar(fillId: string, textId: string, shineId?: string) {
+  const fillEl = document.getElementById(fillId);
+  const textEl = document.getElementById(textId);
+  const shineEl = shineId ? document.getElementById(shineId) : null;
+  
+  if (!fillEl || !textEl) {
+    console.warn(`[Progress Bar] Elements not found: fillId=${fillId}, textId=${textId}`);
+    return;
+  }
+  
+  // Ensure elements are visible
+  fillEl.style.display = 'block';
+  fillEl.style.visibility = 'visible';
+  fillEl.style.opacity = '1';
+  
+  const stages = [
+    { progress: 15, text: 'Fetching transactions...' },
+    { progress: 35, text: 'Enriching NFT data...' },
+    { progress: 55, text: 'Extracting features...' },
+    { progress: 75, text: 'Running model prediction...' },
+    { progress: 90, text: 'Generating explanations...' },
+    { progress: 98, text: 'Finalizing analysis...' }
+  ];
+  
+  let currentStage = 0;
+  const interval = setInterval(() => {
+    if (currentStage < stages.length) {
+      const stage = stages[currentStage];
+      fillEl.style.width = `${stage.progress}%`;
+      textEl.textContent = stage.text;
+      if (shineEl) {
+        shineEl.style.left = `${stage.progress}%`;
+        shineEl.style.display = 'block';
+      }
+      currentStage++;
+    } else {
+      clearInterval(interval);
+    }
+  }, 700); // Update every 700ms for smoother animation
+}
+
 // Event listeners
 rejectBtn?.addEventListener('click', async () => {
   // Get requestId from storage
   const result = await chrome.storage.local.get(['transactionRequestId']);
   const requestId = result.transactionRequestId || '';
   
-  chrome.storage.local.set({ 
+  console.log('[Web3 Antivirus] Reject button clicked, requestId:', requestId);
+  
+  // Set decision with requestId - this will trigger the content script listener
+  await chrome.storage.local.set({ 
     transactionDecision: 'reject',
     transactionRequestId: requestId
   });
+  
+  // Also send message to content script directly to ensure it's received
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0] && tabs[0].id) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        type: 'WEB3_ANTIVIRUS_DECISION',
+        decision: 'reject',
+        requestId: requestId
+      }).catch(err => {
+        console.log('[Web3 Antivirus] Could not send message to content script:', err);
+      });
+    }
+  } catch (err) {
+    console.log('[Web3 Antivirus] Error sending message:', err);
+  }
+  
   chrome.storage.local.remove('pendingTransaction');
   window.close();
 });
@@ -411,10 +1258,30 @@ continueBtn?.addEventListener('click', async () => {
   const result = await chrome.storage.local.get(['transactionRequestId']);
   const requestId = result.transactionRequestId || '';
   
-  chrome.storage.local.set({ 
+  console.log('[Web3 Antivirus] Continue button clicked, requestId:', requestId);
+  
+  // Set decision with requestId - this will trigger the content script listener
+  await chrome.storage.local.set({ 
     transactionDecision: 'approve',
     transactionRequestId: requestId
   });
+  
+  // Also send message to content script directly to ensure it's received
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0] && tabs[0].id) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        type: 'WEB3_ANTIVIRUS_DECISION',
+        decision: 'approve',
+        requestId: requestId
+      }).catch(err => {
+        console.log('[Web3 Antivirus] Could not send message to content script:', err);
+      });
+    }
+  } catch (err) {
+    console.log('[Web3 Antivirus] Error sending message:', err);
+  }
+  
   chrome.storage.local.remove('pendingTransaction');
   window.close();
 });
@@ -427,11 +1294,12 @@ analyzeAccountBtn?.addEventListener('click', async () => {
   }
   
   if (accountResult) accountResult.style.display = 'block';
-  if (accountRiskScore) accountRiskScore.textContent = 'Loading...';
-  if (accountExplanation) accountExplanation.textContent = 'Analyzing account...';
+  
+  // Show progress bar instead of text
+  showProgressBar('account-risk-score', 'account-explanation');
   
   try {
-    const response = await fetch(`${API_BASE_URL}/detect`, {
+    const response = await fetch(`${API_BASE_URL}/detect/account`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -444,26 +1312,97 @@ analyzeAccountBtn?.addEventListener('click', async () => {
     const data = await response.json();
     
     if (data.detection_mode === 'no_data') {
-      if (accountRiskScore) accountRiskScore.textContent = 'N/A (New Account)';
-      if (accountExplanation) accountExplanation.textContent = 'This account has no transaction history. Please analyze a specific transaction instead.';
+      hideProgressBar('account-risk-score', 'account-explanation');
+      if (accountRiskScore) {
+        accountRiskScore.className = 'risk-score-display na';
+        accountRiskScore.textContent = 'N/A (New Account)';
+      }
+      if (accountExplanation) {
+        accountExplanation.textContent = 'This account has no transaction history. Please analyze a specific transaction instead.';
+      }
       return;
     }
     
     const risk = data.account_scam_probability || 0;
+    hideProgressBar('account-risk-score', 'account-explanation');
+    
     if (accountRiskScore) {
       const riskClass = risk > 0.7 ? 'high' : risk > 0.4 ? 'medium' : 'low';
       accountRiskScore.className = `risk-score-display ${riskClass}`;
-      accountRiskScore.textContent = `${(risk * 100).toFixed(1)}%`;
+      accountRiskScore.innerHTML = `
+        <div class="risk-label">${riskClass.toUpperCase()} RISK</div>
+        <div class="risk-percentage">${(risk * 100).toFixed(1)}%</div>
+      `;
     }
     
+    // Handle LLM explanation with proper format
     if (accountExplanation && data.llm_explanations?.account) {
-      accountExplanation.textContent = data.llm_explanations.account;
+      const accountExpl = data.llm_explanations.account;
+      
+      if (typeof accountExpl === 'object' && accountExpl.feature_name) {
+        const featureName = formatFeatureName(accountExpl.feature_name);
+        const featureValue = parseFloat(accountExpl.feature_value) || 0;
+        const formattedValue = formatNumber(featureValue, accountExpl.feature_name);
+        
+        // Get SHAP value from explanations if available
+        const shapValue = data.explanations?.account?.feature_importance?.find(
+          (f: any) => f.feature_name === accountExpl.feature_name
+        )?.shap_value || 0;
+        
+        // Calculate feature-specific risk level
+        const featureRisk = getFeatureRiskLevel(shapValue, featureValue, accountExpl.feature_name);
+        const riskLevel = featureRisk.level;
+        const riskClass = featureRisk.class;
+        
+        const numericalDetails = formatNumericalDetails(accountExpl.feature_name, featureValue, data);
+        
+        accountExplanation.innerHTML = `
+          <div class="risk-item ${riskClass}">
+            <div class="risk-header-row">
+              <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+              <span class="risk-feature-box">${featureName}</span>
+            </div>
+            <div class="risk-item-desc">${accountExpl.reason || 'No explanation available.'}</div>
+            ${numericalDetails && numericalDetails.trim() ? `<div class="risk-numerical-details">${numericalDetails}</div>` : ''}
+          </div>
+        `;
+      } else if (typeof accountExpl === 'string') {
+        const riskLevel = getRiskLevelText(risk);
+        const riskClass = getRiskClass(risk);
+        accountExplanation.innerHTML = `
+          <div class="risk-item ${riskClass}">
+            <div class="risk-header-row">
+              <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+              <span class="risk-feature-box">Account Analysis</span>
+            </div>
+            <div class="risk-item-desc">${accountExpl}</div>
+          </div>
+        `;
+      }
+    } else if (accountExplanation) {
+      const riskLevel = getRiskLevelText(risk);
+      const riskClass = getRiskClass(risk);
+      accountExplanation.innerHTML = `
+        <div class="risk-item ${riskClass}">
+          <div class="risk-header-row">
+            <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+            <span class="risk-feature-box">Account Analysis</span>
+          </div>
+          <div class="risk-item-desc">Analysis completed.</div>
+        </div>
+      `;
     }
     
   } catch (error) {
     console.error('Error analyzing account:', error);
-    if (accountRiskScore) accountRiskScore.textContent = 'Error';
-    if (accountExplanation) accountExplanation.textContent = 'Failed to analyze account. Please try again.';
+    hideProgressBar('account-risk-score', 'account-explanation');
+    if (accountRiskScore) {
+      accountRiskScore.className = 'risk-score-display';
+      accountRiskScore.textContent = 'Error';
+    }
+    if (accountExplanation) {
+      accountExplanation.textContent = 'Failed to analyze account. Please try again.';
+    }
   }
 });
 
@@ -475,42 +1414,117 @@ analyzeTransactionBtn?.addEventListener('click', async () => {
   }
   
   if (transactionResult) transactionResult.style.display = 'block';
-  if (transactionRiskScore) transactionRiskScore.textContent = 'Loading...';
-  if (transactionExplanation) transactionExplanation.textContent = 'Analyzing transaction...';
   
-  // For now, parse as transaction hash
-  // In production, would fetch transaction details from Etherscan
+  // Show progress bar instead of text
+  showProgressBar('transaction-risk-score', 'transaction-explanation');
+  
   try {
+    // Check if input is a transaction hash (starts with 0x and is 66 chars)
+    const isTxHash = input.startsWith('0x') && input.length === 66;
+    
     const response = await fetch(`${API_BASE_URL}/detect/transaction`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from_address: '0x0000000000000000000000000000000000000000', // Would parse from transaction
-        to_address: input,
-        value: '0x0',
-        gasPrice: '0x0',
-        explain: true,
-        explain_with_llm: true
-      })
+      body: JSON.stringify(
+        isTxHash
+          ? {
+              transaction_hash: input,
+              explain: true,
+              explain_with_llm: true
+            }
+          : {
+              from_address: '0x0000000000000000000000000000000000000000',
+              to_address: input,
+              value: '0x0',
+              gasPrice: '0x0',
+              explain: true,
+              explain_with_llm: true
+            }
+      )
     });
     
     const data = await response.json();
     const risk = data.transaction_scam_probability || 0;
     
+    hideProgressBar('transaction-risk-score', 'transaction-explanation');
+    
     if (transactionRiskScore) {
       const riskClass = risk > 0.7 ? 'high' : risk > 0.4 ? 'medium' : 'low';
       transactionRiskScore.className = `risk-score-display ${riskClass}`;
-      transactionRiskScore.textContent = `${(risk * 100).toFixed(1)}%`;
+      transactionRiskScore.innerHTML = `
+        <div class="risk-label">${riskClass.toUpperCase()} RISK</div>
+        <div class="risk-percentage">${(risk * 100).toFixed(1)}%</div>
+      `;
     }
     
+    // Handle LLM explanation with proper format
     if (transactionExplanation && data.llm_explanations?.transaction) {
-      transactionExplanation.textContent = data.llm_explanations.transaction;
+      const txExpl = data.llm_explanations.transaction;
+      
+      if (typeof txExpl === 'object' && txExpl.feature_name) {
+        const featureName = formatFeatureName(txExpl.feature_name);
+        const featureValue = parseFloat(txExpl.feature_value) || 0;
+        const formattedValue = formatNumber(featureValue, txExpl.feature_name);
+        
+        // Get SHAP value from explanations if available
+        const shapValue = data.explanations?.transaction?.feature_importance?.find(
+          (f: any) => f.feature_name === txExpl.feature_name
+        )?.shap_value || 0;
+        
+        // Calculate feature-specific risk level
+        const featureRisk = getFeatureRiskLevel(shapValue, featureValue, txExpl.feature_name);
+        const riskLevel = featureRisk.level;
+        const riskClass = featureRisk.class;
+        
+        const numericalDetails = formatNumericalDetails(txExpl.feature_name, featureValue, null, data);
+        
+        transactionExplanation.innerHTML = `
+          <div class="risk-item ${riskClass}">
+            <div class="risk-header-row">
+              <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+              <span class="risk-feature-box">${featureName}</span>
+            </div>
+            <div class="risk-item-desc">${txExpl.reason || 'No explanation available.'}</div>
+            ${numericalDetails && numericalDetails.trim() ? `<div class="risk-numerical-details">${numericalDetails}</div>` : ''}
+          </div>
+        `;
+      } else if (typeof txExpl === 'string') {
+        const riskLevel = getRiskLevelText(risk);
+        const riskClass = getRiskClass(risk);
+        transactionExplanation.innerHTML = `
+          <div class="risk-item ${riskClass}">
+            <div class="risk-header-row">
+              <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+              <span class="risk-feature-box">Transaction Analysis</span>
+            </div>
+            <div class="risk-item-desc">${txExpl}</div>
+          </div>
+        `;
+      }
+    } else if (transactionExplanation) {
+      const riskLevel = getRiskLevelText(risk);
+      const riskClass = getRiskClass(risk);
+      transactionExplanation.innerHTML = `
+        <div class="risk-item ${riskClass}">
+          <div class="risk-header-row">
+            <span class="risk-level-badge ${riskClass}">${riskLevel}</span>
+            <span class="risk-feature-box">Transaction Analysis</span>
+          </div>
+          <div class="risk-item-desc">Analysis completed.</div>
+        </div>
+      `;
     }
     
   } catch (error) {
     console.error('Error analyzing transaction:', error);
-    if (transactionRiskScore) transactionRiskScore.textContent = 'Error';
-    if (transactionExplanation) transactionExplanation.textContent = 'Failed to analyze transaction. Please try again.';
+    hideProgressBar('transaction-risk-score', 'transaction-explanation');
+    if (transactionRiskScore) {
+      transactionRiskScore.className = 'risk-score-display';
+      transactionRiskScore.textContent = 'Error';
+    }
+    if (transactionExplanation) {
+      transactionExplanation.textContent = 'Failed to analyze transaction. Please try again.';
+    }
   }
 });
 

@@ -33,21 +33,48 @@
         <div class="detail-item">
           <label>To Address</label>
           <div class="address-value" id="to-address">-</div>
+          <div id="etherscan-warning" class="etherscan-warning" style="display: none; margin-top: 8px; padding: 8px 12px; background: rgba(244, 67, 54, 0.15); border-left: 3px solid #F44336; border-radius: 4px; font-size: 12px; color: #F44336; font-weight: 600;">
+            ⚠️ This account has been reported on Etherscan
+          </div>
           <a href="#" id="etherscan-link" target="_blank" class="etherscan-link" style="display: block; margin-top: 4px; font-size: 12px; color: #667eea; text-decoration: none;">
             View account on Etherscan
           </a>
         </div>
-        <div class="detail-item">
-          <label>You're sending</label>
-          <div class="value-display">
-            <span class="eth-icon">Ξ</span>
-            <span id="eth-value">0.00</span>
-            <span class="usd-value" id="usd-value">($0.00)</span>
+        <div class="detail-item" id="you-send-detail">
+          <label>You send</label>
+          <div id="you-send-content">
+            <div class="value-display" id="eth-value-display">
+              <span class="eth-icon">Ξ</span>
+              <span id="eth-value">0.00</span>
+              <span class="usd-value" id="usd-value">($0.00)</span>
+            </div>
+            <div id="nft-send-info" style="display: none; margin-top: 8px;">
+              <div class="nft-send-item">
+                <span class="nft-token-id" id="nft-token-id">#0</span>
+                <span class="nft-contract" id="nft-contract">0x...</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="detail-item" id="nft-detail" style="display: none;">
-          <label>NFT</label>
-          <div class="nft-info" id="nft-info">-</div>
+        <div class="detail-item" id="network-detail">
+          <label>Network</label>
+          <div class="network-display" id="network-display">-</div>
+        </div>
+        <div class="detail-item" id="request-from-detail">
+          <label>Request from</label>
+          <div class="request-from-display" id="request-from-display">-</div>
+        </div>
+        <div class="detail-item" id="network-fee-detail">
+          <label>Network fee</label>
+          <div class="network-fee-display" id="network-fee-display">-</div>
+        </div>
+        <div class="detail-item" id="gas-price-detail">
+          <label>Gas Price</label>
+          <div class="gas-price-display" id="gas-price-display">-</div>
+        </div>
+        <div class="detail-item" id="gas-used-detail">
+          <label>Gas Used</label>
+          <div class="gas-used-display" id="gas-used-display">-</div>
         </div>
       </div>
       

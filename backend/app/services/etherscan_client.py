@@ -93,13 +93,15 @@ def _hex_to_int(x: Optional[str]) -> int:
 
 # Function signature mapping (common NFT functions)
 SIG_MAP = {
-    "0x095ea7b3": "approve",
-    "0xa22cb465": "setApprovalForAll",
-    "0x23b872dd": "transferFrom",
-    "0x42842e0e": "safeTransferFrom",
-    "0xb88d4fde": "safeTransferFrom",
-    "0xf242432a": "safeBatchTransferFrom",
-    "0x8fcbaf0c": "permit",
+    "0x095ea7b3": ("approve", None),
+    "0xa22cb465": ("setApprovalForAll", "erc721"),
+    "0x23b872dd": ("transferFrom", None),
+    "0x42842e0e": ("safeTransferFrom", "erc721"),
+    "0xb88d4fde": ("safeTransferFrom", "erc721"),
+    "0xf242432a": ("safeBatchTransferFrom", "erc1155"),
+    "0x8fcbaf0c": ("permit", "erc20"),
+    "0xa9059cbb": ("transfer", "erc20"),
+    "0x2eb2c2d6": ("safeTransferFrom", "erc1155"),
 }
 
 def decode_function_name(input_data: Optional[str]) -> List[str]:
@@ -107,50 +109,73 @@ def decode_function_name(input_data: Optional[str]) -> List[str]:
     if not input_data or len(input_data) < 10:
         return []
     sel = input_data[:10].lower()
-    name = SIG_MAP.get(sel)
+    name = SIG_MAP.get(sel, (None,))[0]
     return [name] if name else []
 
-async def get_account_transactions(address: str, max_txns: int = 1000, chainid: Optional[int] = None) -> List[Dict[str, Any]]:
-    """
-    Get all transactions for an account address and format them for model input
-    
-    Args:
-        address: Ethereum address
-        max_txns: Maximum number of transactions to fetch
-        chainid: Chain ID (1 for Ethereum mainnet)
-    """
-    all_transactions = []
+def _get_token_type_from_input(input_data: Optional[str]) -> Optional[str]:
+    """Infer token standard from function selector."""
+    if not input_data or len(input_data) < 10:
+        return None
+    sel = input_data[:10].lower()
+    return SIG_MAP.get(sel, (None, None))[1]
+
+def _safe_int(value: Any) -> int:
+    """Parse decimal or hex string into int."""
+    if value in (None, "", "0x", "0X"):
+        return 0
+    try:
+        value = str(value)
+        if value.lower().startswith("0x"):
+            return int(value, 16)
+        return int(value, 10)
+    except (ValueError, TypeError):
+        return 0
+
+async def _fetch_token_transactions(address: str, action: str, tx_type: str, max_txns: int, chainid: Optional[int]) -> List[Dict[str, Any]]:
+    """Fetch token transfers of a specific standard for an address."""
+    transactions: List[Dict[str, Any]] = []
     page = 1
     offset = 100
     
-    while len(all_transactions) < max_txns:
-        result = await get_transaction_list(address, page=page, offset=offset, chainid=chainid)
+    while len(transactions) < max_txns:
+        result = await etherscan_get(
+            "account",
+            action,
+            chainid=chainid,
+            address=address,
+            page=page,
+            offset=offset,
+            sort="desc"
+        )
         
         if result.get("status") != "1":
             break
-            
+        
         txns = result.get("result", [])
-        if not txns or not isinstance(txns, list):
+        if not isinstance(txns, list) or not txns:
             break
-            
+        
         for txn in txns:
-            if len(all_transactions) >= max_txns:
+            if len(transactions) >= max_txns:
                 break
-                
-            # Format transaction
+            
+            selector_type = _get_token_type_from_input(txn.get("input"))
+            inferred_type = selector_type or tx_type
+            
             formatted_txn = {
                 "from_address": (txn.get("from") or "").lower(),
                 "to_address": (txn.get("to") or "").lower(),
-                "value": _hex_to_int(txn.get("value")),
-                "gasPrice": _hex_to_int(txn.get("gasPrice")),
-                "gasUsed": _hex_to_int(txn.get("gasUsed", "0")),
-                "timestamp": int(txn.get("timeStamp", 0)),
+                "value": _safe_int(txn.get("value")),
+                "gasPrice": _safe_int(txn.get("gasPrice")),
+                "gasUsed": _safe_int(txn.get("gasUsed")),
+                "timestamp": _safe_int(txn.get("timeStamp")),
                 "function_call": decode_function_name(txn.get("input")),
                 "transaction_hash": txn.get("hash", ""),
-                "blockNumber": _hex_to_int(txn.get("blockNumber")),
-                "contract_address": (txn.get("to") or "").lower(),
-                "token_value": 0,  # Will be enriched by Rarible API
-                "token_decimal": 0,
+                "blockNumber": _safe_int(txn.get("blockNumber")),
+                "contract_address": (txn.get("contractAddress") or txn.get("to") or "").lower(),
+                "token_value": _safe_int(txn.get("tokenValue") or txn.get("value")),
+                "token_decimal": _safe_int(txn.get("tokenDecimal")),
+                "token_id": txn.get("tokenID"),
                 "nft_floor_price": 0,
                 "nft_average_price": 0,
                 "nft_total_volume": 0,
@@ -160,14 +185,39 @@ async def get_account_transactions(address: str, max_txns: int = 1000, chainid: 
                 "nft_7day_volume": 0,
                 "nft_7day_sales": 0,
                 "nft_7day_avg_price": 0,
-                "tx_type": "erc721" if txn.get("input", "0x") != "0x" else "normal",
+                "tx_type": inferred_type or tx_type,
             }
-            all_transactions.append(formatted_txn)
+            transactions.append(formatted_txn)
         
         if len(txns) < offset:
             break
-            
+        
         page += 1
     
-    return all_transactions[:max_txns]
+    return transactions
+
+async def get_account_transactions(address: str, max_txns: int = 1000, chainid: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Get ERC20/ERC721/ERC1155 transactions for an account address and format them for model input.
+    
+    Args:
+        address: Ethereum address
+        max_txns: Maximum number of transactions per token type (ERC20, ERC721, ERC1155)
+        chainid: Chain ID (1 for Ethereum mainnet)
+    
+    Returns:
+        Combined list of transactions: max 10 ERC20 + max 10 ERC721 + max 10 ERC1155
+    """
+    # Fetch max 10 transactions for each token type
+    max_per_type = 10
+    erc20 = await _fetch_token_transactions(address, "tokentx", "erc20", max_per_type, chainid)
+    erc721 = await _fetch_token_transactions(address, "tokennfttx", "erc721", max_per_type, chainid)
+    erc1155 = await _fetch_token_transactions(address, "token1155tx", "erc1155", max_per_type, chainid)
+    
+    # Combine all transactions and sort by timestamp (newest first)
+    combined = erc20 + erc721 + erc1155
+    combined.sort(key=lambda tx: tx.get("timestamp", 0), reverse=True)
+    
+    # Return all combined transactions (max 30 total: 10 + 10 + 10)
+    return combined
 

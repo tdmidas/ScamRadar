@@ -101,14 +101,38 @@ class LLMExplainer:
         feature_value = top_feature['feature_value']
         impact = "increasing risk" if top_feature['shap_value'] > 0 else "decreasing risk"
         
-        prompt = f"""Analyze Web3 {task_type} risk. Return ONLY valid JSON, no other text.
+        # Format feature value for natural language
+        formatted_value = self._format_feature_value(top_feature['feature_name'], feature_value)
+        
+        prompt = f"""You are a Web3 security expert analyzing {task_type} risk for NFT phishing detection.
 
-Risk: {prediction_prob:.1%} ({risk_level})
-Top feature: {feature_name} = {feature_value:.2f} ({impact}, importance={abs(top_feature['shap_value']):.4f})
+Context:
+- Risk Level: {prediction_prob:.1%} ({risk_level})
+- Feature: {feature_name}
+- Feature Value: {formatted_value} (this value already includes the unit - use it as-is in your explanation)
+- Impact: {impact}
 
-Return JSON:
+Task: Write a natural, flowing explanation that EMBEDS the feature value WITH ITS UNIT ({formatted_value}) directly into the sentence. The explanation should read naturally like a complete sentence.
+
+IMPORTANT: The value {formatted_value} already includes the unit (e.g., "2.5 gwei", "0.001 ETH", "10 days"). Use the value WITH the unit in your explanation.
+
+Examples of good explanations:
+- "This account has an average transaction fee of {formatted_value}, which may indicate an attacker rushing to execute transactions before detection."
+- "This transaction has a value of 0 ETH, suggesting it may be a phishing attempt to steal NFTs through approval scams."
+- "The account has been active for {formatted_value}, which is unusually short for a legitimate account."
+- "This account has {formatted_value} total transactions, indicating potential malicious activity."
+
+Guidelines:
+- ALWAYS include the unit when mentioning the value (e.g., "has {formatted_value}", "shows {formatted_value}", "with {formatted_value}")
+- The value {formatted_value} already has the unit, so use it exactly as provided
+- Explain WHY this value is suspicious or safe
+- Reference common phishing/scam patterns
+- Keep it concise (max 25 words)
+- Write as a complete, flowing sentence - NOT separate value and explanation
+
+Return ONLY valid JSON, no markdown, no other text:
 {{
-  "reason": "Explain why this {feature_name} value ({feature_value:.2f}) is {impact} for this {task_type}. Be concise (max 20 words)."
+  "reason": "Your natural explanation with value and unit embedded"
 }}"""
 
         try:
@@ -122,6 +146,8 @@ Return JSON:
             )
             api_time = time.time() - api_start
             logger.debug(f"⏱️ [TIMING] Gemini API generate_content ({task_type}): {api_time:.2f}s")
+            logger.debug(f"[DEBUG] Gemini prompt: {prompt}")
+            logger.debug(f"[DEBUG] Gemini raw response: {response.text[:200]}")
             
             explanation_text = response.text.strip()
             
@@ -141,6 +167,8 @@ Return JSON:
                 
                 # Format feature value based on type
                 formatted_value = self._format_feature_value(top_feature['feature_name'], feature_value)
+                
+                logger.debug(f"[DEBUG] Parsed LLM explanation - feature: {feature_name}, value: {formatted_value}, reason: {reason[:100]}")
                 
                 return {
                     "feature_name": feature_name,
@@ -169,20 +197,71 @@ Return JSON:
             }
     
     def _format_feature_value(self, feature_name: str, value: float) -> str:
-        """Format feature value for display"""
-        # Format based on feature type
-        if 'gas_price' in feature_name or 'gas_used' in feature_name:
-            # Format as integer for gas
-            return str(int(value))
-        elif 'value' in feature_name and 'eth' not in feature_name.lower():
-            # Format as integer for token values
-            return str(int(value))
-        elif 'eth' in feature_name.lower() or 'price' in feature_name.lower():
-            # Format with decimals for ETH/price
-            return f"{value:.4f}"
-        elif 'ratio' in feature_name or 'duration' in feature_name:
-            # Format with 2 decimals for ratios/durations
+        """Format feature value with units for display"""
+        # Handle invalid/negative values
+        if value < 0:
+            # Negative values are invalid, treat as 0
+            value = 0
+        
+        # Format based on feature type with clear units
+        if 'gas_price' in feature_name or 'avg_gas_price' in feature_name:
+            # Gas price is in wei, convert to gwei
+            if value == 0:
+                return "0.00000000 gwei"  # Show specific value for 0
+            gwei = value / 1e9
+            if gwei >= 1000:
+                return f"{(gwei / 1000):.2f}k gwei"
+            elif gwei < 0.00000001:
+                # Very small values, show in wei with more precision
+                return f"{value:.0f} wei"
+            elif gwei < 0.01:
+                # Small values, show with more decimal places
+                return f"{gwei:.8f} gwei"
+            else:
+                return f"{gwei:.2f} gwei"
+        elif 'gas_used' in feature_name or 'avg_gas_used' in feature_name:
+            # Gas used is in units (no conversion needed)
+            if value >= 1000000:
+                return f"{(value / 1000000):.2f}M"
+            elif value >= 1000:
+                return f"{(value / 1000):.2f}k"
+            else:
+                return f"{int(value)}"
+        elif 'value' in feature_name and ('eth' in feature_name.lower() or 'transaction' in feature_name.lower()):
+            # Transaction value in wei, convert to ETH
+            if value == 0:
+                return "0 ETH"
+            eth = value / 1e18
+            if eth >= 1:
+                return f"{eth:.4f} ETH"
+            else:
+                return f"{(eth * 1000):.2f} mETH"
+        elif 'value' in feature_name and 'token' in feature_name.lower():
+            # Token value (already in token units)
+            if value >= 1000000:
+                return f"{(value / 1000000):.2f}M tokens"
+            elif value >= 1000:
+                return f"{(value / 1000):.2f}k tokens"
+            else:
+                return f"{int(value)} tokens"
+        elif 'volume' in feature_name.lower() or 'price' in feature_name.lower():
+            # NFT volume/price in wei, convert to ETH
+            if value == 0:
+                return "0 ETH"
+            eth = value / 1e18
+            if eth >= 1:
+                return f"{eth:.4f} ETH"
+            else:
+                return f"{(eth * 1000):.2f} mETH"
+        elif 'ratio' in feature_name:
+            # Ratio (no unit)
             return f"{value:.2f}"
+        elif 'duration' in feature_name or 'days' in feature_name:
+            # Duration in days
+            return f"{int(value)} days"
+        elif 'num' in feature_name or 'count' in feature_name or 'txn' in feature_name:
+            # Counts (no unit)
+            return f"{int(value)}"
         else:
             # Default: integer if whole number, else 2 decimals
             if value == int(value):

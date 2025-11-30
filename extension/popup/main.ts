@@ -16,7 +16,7 @@ const nftInfoEl = document.getElementById('nft-info');
 const accountRiskEl = document.getElementById('account-risk');
 const transactionRiskEl = document.getElementById('transaction-risk');
 const riskExplanationsEl = document.getElementById('risk-explanations');
-const etherscanLinkEl = document.getElementById('etherscan-link');
+const etherscanLinkEl = document.getElementById('etherscan-link') as HTMLAnchorElement | null;
 const rejectBtn = document.getElementById('reject-btn');
 const continueBtn = document.getElementById('continue-btn');
 
@@ -46,10 +46,11 @@ chrome.storage.local.get(['pendingTransaction'], (result) => {
 async function showTransactionView(transactionData: any) {
   transactionView?.classList.add('active');
   defaultView?.classList.remove('active');
+  const { recipientAddress } = resolveTransactionAddresses(transactionData);
   
   // Display transaction details
   if (fromAddressEl) fromAddressEl.textContent = formatAddress(transactionData.from || '');
-  if (toAddressEl) toAddressEl.textContent = formatAddress(transactionData.to || '');
+  if (toAddressEl) toAddressEl.textContent = formatAddress(recipientAddress || transactionData.to || '');
   
   const value = hexToEth(transactionData.value || '0x0');
   if (ethValueEl) ethValueEl.textContent = value.toFixed(4);
@@ -66,7 +67,7 @@ async function showTransactionView(transactionData: any) {
   
   // Set Etherscan link
   if (etherscanLinkEl) {
-    etherscanLinkEl.href = `https://etherscan.io/address/${transactionData.to || ''}`;
+    etherscanLinkEl.href = `https://etherscan.io/address/${recipientAddress || transactionData.to || ''}`;
   }
   
   // Analyze transaction
@@ -82,14 +83,18 @@ function showDefaultView() {
 // Analyze transaction for popup
 async function analyzeTransactionForPopup(transactionData: any) {
   showLoading('risk-explanations');
-  
+  const { recipientAddress, contractAddress } = resolveTransactionAddresses(transactionData);
+
   try {
     // Try to analyze account first
-    const accountResult = await fetch(`${API_BASE_URL}/detect`, {
+    const targetAccount = recipientAddress || '';
+
+    const accountResult = await fetch(`${API_BASE_URL}/detect/account`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        account_address: transactionData.from || '',
+        // Always analyze the recipient account since that's the risky target
+        account_address: targetAccount,
         explain: true,
         explain_with_llm: true
       })
@@ -109,7 +114,7 @@ async function analyzeTransactionForPopup(transactionData: any) {
     updateRiskDisplay(accountRiskEl, accountRisk, 'Account Risk');
     
     // Analyze transaction
-    const txResult = await analyzeTransactionOnly(transactionData, accountData);
+    const txResult = await analyzeTransactionOnly(transactionData, accountData, { recipientAddress, contractAddress });
     
     // Display transaction risk
     const txRisk = txResult.transaction_scam_probability || 0;
@@ -127,18 +132,23 @@ async function analyzeTransactionForPopup(transactionData: any) {
 }
 
 // Analyze transaction only (for new accounts)
-async function analyzeTransactionOnly(transactionData: any, accountData?: any) {
+async function analyzeTransactionOnly(transactionData: any, accountData?: any, resolved?: { recipientAddress: string | null, contractAddress: string | null }) {
+  const addresses = resolved || resolveTransactionAddresses(transactionData);
+  const recipientAddress = addresses.recipientAddress || transactionData.to || '';
+  const contractAddress = addresses.contractAddress || null;
+
   const response = await fetch(`${API_BASE_URL}/detect/transaction`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       from_address: transactionData.from || '',
-      to_address: transactionData.to || '',
+      to_address: recipientAddress,
       value: transactionData.value || '0x0',
       gasPrice: transactionData.gasPrice || '0x0',
       gasUsed: transactionData.gas || '0x0',
       function_call: extractFunctions(transactionData.data),
-      contract_address: transactionData.to || null,
+      input: transactionData.data || '0x',
+      contract_address: contractAddress,
       token_value: '0',
       explain: true,
       explain_with_llm: true
@@ -272,6 +282,55 @@ function showLoading(elementId: string) {
   }
 }
 
+function resolveTransactionAddresses(transactionData: any): { recipientAddress: string | null, contractAddress: string | null } {
+  const rawTo = transactionData.to || '';
+  const decodedRecipient = extractRecipientAddress(transactionData.data);
+  const isContractCall = !!decodedRecipient;
+  const recipientAddress = normalizeAddress(decodedRecipient || rawTo);
+  const contractAddress = isContractCall ? normalizeAddress(rawTo) : null;
+  return { recipientAddress, contractAddress };
+}
+
+function extractRecipientAddress(data?: string): string | null {
+  if (!data || data === '0x' || data.length < 10) return null;
+  const sanitized = data.startsWith('0x') ? data.slice(2) : data;
+  if (sanitized.length < 8) return null;
+  const selector = `0x${sanitized.slice(0, 8).toLowerCase()}`;
+  const payload = sanitized.slice(8);
+
+  const secondWord = getWord(payload, 1);
+  const address = decodeAddressWord(secondWord);
+
+  switch (selector) {
+    case '0x23b872dd': // transferFrom(address,address,uint256)
+    case '0x42842e0e': // safeTransferFrom(address,address,uint256)
+    case '0xb88d4fde': // safeTransferFrom(address,address,uint256,bytes)
+    case '0xf242432a': // safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)
+      return address;
+    default:
+      return null;
+  }
+}
+
+function getWord(payload: string, index: number): string | null {
+  const start = index * 64;
+  const end = start + 64;
+  if (payload.length < end) return null;
+  return payload.slice(start, end);
+}
+
+function decodeAddressWord(word: string | null): string | null {
+  if (!word || word.length !== 64) return null;
+  const addr = word.slice(-40);
+  return normalizeAddress(`0x${addr}`);
+}
+
+function normalizeAddress(address?: string | null): string | null {
+  if (!address) return null;
+  const lower = address.toLowerCase();
+  return lower.startsWith('0x') ? lower : `0x${lower}`;
+}
+
 // Event listeners
 rejectBtn?.addEventListener('click', () => {
   chrome.storage.local.set({ transactionDecision: 'reject' });
@@ -297,7 +356,7 @@ analyzeAccountBtn?.addEventListener('click', async () => {
   if (accountExplanation) accountExplanation.textContent = 'Analyzing account...';
   
   try {
-    const response = await fetch(`${API_BASE_URL}/detect`, {
+    const response = await fetch(`${API_BASE_URL}/detect/account`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -351,10 +410,7 @@ analyzeTransactionBtn?.addEventListener('click', async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from_address: '0x0000000000000000000000000000000000000000', // Would parse from transaction
-        to_address: input,
-        value: '0x0',
-        gasPrice: '0x0',
+        transaction_hash: input,
         explain: true,
         explain_with_llm: true
       })

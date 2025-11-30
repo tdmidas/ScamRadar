@@ -120,7 +120,8 @@ async def fetch_transaction_from_etherscan(tx_hash: str) -> Dict[str, Any]:
         "tx_type": "erc721" if is_nft_tx else "normal",
     }
     
-    logger.info(f"Transaction fetched: from={from_address}, to={to_address}, value={value}, gas={gas_used}")
+    logger.info(f"Transaction fetched: from={from_address}, to={to_address}, value={value}, gas_price={gas_price}, gas_used={gas_used}, functions={function_calls}")
+    logger.debug(f"[DEBUG] Transaction data: {formatted_txn}")
     return formatted_txn
 
 class DetectIn(BaseModel):
@@ -227,8 +228,32 @@ async def detect_transaction(body: DetectTransactionIn):
         logger.exception(f"Transaction detection failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transaction detection failed: {str(e)}")
 
-@router.post("")
-async def detect(body: DetectIn):
+async def _handle_account_detection(body: DetectIn):
+    """Shared implementation for account detection endpoints."""
+    logger.info(f"Account detection request: address={body.account_address}, explain={body.explain}, explain_llm={body.explain_with_llm}")
+    
+    if body.explain_with_llm and not body.explain:
+        raise HTTPException(
+            status_code=400,
+            detail="explain must be True when explain_with_llm is True"
+        )
+    
+    detection_start = time.time()
+    detection_service = get_detection_service()
+    result = await detection_service.detect_account(
+        account_address=body.account_address,
+        explain=body.explain,
+        explain_with_llm=body.explain_with_llm,
+        max_transactions=body.max_transactions
+    )
+    detection_time = time.time() - detection_start
+    
+    logger.info(f"Account detection completed: address={body.account_address}, mode={result.get('detection_mode')}")
+    logger.info(f"⏱️ [TIMING] Total endpoint time: {detection_time:.2f}s")
+    return result
+
+@router.post("/account")
+async def detect_account(body: DetectIn):
     """
     Detect phishing/scam activity for an account address
     
@@ -241,30 +266,15 @@ async def detect(body: DetectIn):
     6. Generate LLM explanations (if explain_with_llm=True)
     """
     try:
-        logger.info(f"Account detection request: address={body.account_address}, explain={body.explain}, explain_llm={body.explain_with_llm}")
-        
-        if body.explain_with_llm and not body.explain:
-            raise HTTPException(
-                status_code=400,
-                detail="explain must be True when explain_with_llm is True"
-            )
-        
-        detection_start = time.time()
-        detection_service = get_detection_service()
-        result = await detection_service.detect_account(
-            account_address=body.account_address,
-            explain=body.explain,
-            explain_with_llm=body.explain_with_llm,
-            max_transactions=body.max_transactions
-        )
-        detection_time = time.time() - detection_start
-        
-        logger.info(f"Account detection completed: address={body.account_address}, mode={result.get('detection_mode')}")
-        logger.info(f"⏱️ [TIMING] Total endpoint time: {detection_time:.2f}s")
-        return result
+        return await _handle_account_detection(body)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception(f"Account detection failed for {body.account_address}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Detection failed: {str(e)}")
+
+@router.post("")
+async def detect(body: DetectIn):
+    """Legacy endpoint kept for backward compatibility."""
+    return await _handle_account_detection(body)
 

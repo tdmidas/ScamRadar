@@ -6,7 +6,7 @@ import os
 import httpx
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Set
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -21,8 +21,21 @@ HEADERS = {
 
 _DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
-async def rarible_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Send GET request to Rarible API"""
+# Cache for collections that don't exist (404) to avoid repeated API calls
+_NOT_FOUND_CACHE: Set[str] = set()
+
+async def rarible_get(path: str, params: Optional[Dict[str, Any]] = None, allow_404: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Send GET request to Rarible API
+    
+    Args:
+        path: API path
+        params: Query parameters
+        allow_404: If True, return None for 404 instead of raising exception
+    
+    Returns:
+        JSON response or None if 404 and allow_404=True
+    """
     if not RARIBLE_API_KEY:
         raise RuntimeError("RARIBLE_API_KEY not set")
     
@@ -32,17 +45,16 @@ async def rarible_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dic
         r = await client.get(url, params=params or {})
         elapsed = time.time() - start_time
         
+        # Handle 404 gracefully if allowed
+        if r.status_code == 404 and allow_404:
+            logger.debug(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s (Status: 404 - Not Found)")
+            return None
+        
         # Debug: Print response details if error
         if r.status_code != 200:
             logger.warning(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s (Status: {r.status_code})")
-            print(f"DEBUG - Request URL: {url}")
-            print(f"DEBUG - Status Code: {r.status_code}")
-            print(f"DEBUG - Response Headers: {dict(r.headers)}")
-            try:
-                response_body = r.json()
-                print(f"DEBUG - Response Body: {response_body}")
-            except:
-                print(f"DEBUG - Response Text: {r.text[:500]}")
+            if r.status_code == 404:
+                logger.debug(f"   Collection not found: {path}")
         else:
             logger.debug(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s")
         
@@ -66,7 +78,7 @@ async def collection_by_id(collection_id: str) -> Dict[str, Any]:
     """Get collection by ID"""
     return await rarible_get(f"collections/{collection_id}")
 
-async def collection_statistics(collection_id: str) -> Dict[str, Any]:
+async def collection_statistics(collection_id: str) -> Optional[Dict[str, Any]]:
     """
     Get NFT Collection statistics from Rarible API v0.1
     
@@ -74,7 +86,7 @@ async def collection_statistics(collection_id: str) -> Dict[str, Any]:
         collection_id: Collection ID in format "ETHEREUM:{contract_address}"
     
     Returns:
-        Dictionary with statistics:
+        Dictionary with statistics or None if collection not found (404):
         - listed: Number of listed items
         - items: Total number of items
         - owners: Number of owners
@@ -83,7 +95,7 @@ async def collection_statistics(collection_id: str) -> Dict[str, Any]:
         - marketCap: [{"currency": "USD|ETH", "value": float}, ...]
         - volume: [{"currency": "USD|ETH", "value": float}, ...]
     """
-    return await rarible_get(f"data/collections/{collection_id}/statistics")
+    return await rarible_get(f"data/collections/{collection_id}/statistics", allow_404=True)
 
 async def item_by_id(item_id: str) -> Dict[str, Any]:
     """Get item by ID"""
@@ -119,24 +131,54 @@ def _extract_eth_value(price_list: list) -> float:
     
     return 0.0
 
+def _set_default_nft_fields(transaction: Dict[str, Any]) -> None:
+    """Set all NFT-related fields to 0 (default values)"""
+    transaction["nft_num_owners"] = 0
+    transaction["nft_total_sales"] = 0
+    transaction["nft_floor_price"] = 0
+    transaction["nft_market_cap"] = 0
+    transaction["nft_total_volume"] = 0
+    transaction["nft_average_price"] = 0
+    transaction["nft_7day_volume"] = 0
+    transaction["nft_7day_sales"] = 0
+    transaction["nft_7day_avg_price"] = 0
+
 async def enrich_transaction_with_nft_data(transaction: Dict[str, Any]) -> Dict[str, Any]:
     """
     Enrich transaction with NFT collection metrics from Rarible using the statistics API
     
     Uses: GET https://api.rarible.org/v0.1/data/collections/{collection}/statistics
+    
+    If collection not found (404), sets all NFT fields to 0 and caches the result
+    to avoid repeated API calls for the same non-existent collection.
     """
     contract_address = transaction.get("contract_address", "")
     if not contract_address or contract_address == "":
+        _set_default_nft_fields(transaction)
         return transaction
     
     enrich_start = time.time()
+    collection_id = f"ETHEREUM:{contract_address}"
+    
+    # Check cache first - if collection was previously not found, skip API call
+    if collection_id in _NOT_FOUND_CACHE:
+        logger.debug(f"⏱️ [CACHE] Collection {contract_address[:10]}... already known as not found, skipping API call")
+        _set_default_nft_fields(transaction)
+        enrich_time = time.time() - enrich_start
+        logger.debug(f"⏱️ [TIMING] NFT enrichment (cached) for {contract_address[:10]}...: {enrich_time:.3f}s")
+        return transaction
+    
     try:
         # Get collection statistics using the new API endpoint
-        collection_id = f"ETHEREUM:{contract_address}"
         stats = await collection_statistics(collection_id)
         
-        if stats:
-            # Extract values, preferring ETH currency
+        if stats is None:
+            # Collection not found (404) - cache it and set defaults
+            _NOT_FOUND_CACHE.add(collection_id)
+            logger.debug(f"⏱️ [CACHE] Caching not-found collection: {contract_address[:10]}...")
+            _set_default_nft_fields(transaction)
+        else:
+            # Collection found - extract values, preferring ETH currency
             transaction["nft_num_owners"] = stats.get("owners", 0) or 0
             transaction["nft_total_sales"] = stats.get("items", 0) or 0  # Using items as total sales indicator
             transaction["nft_floor_price"] = _extract_eth_value(stats.get("floorPrice", []))
@@ -162,23 +204,12 @@ async def enrich_transaction_with_nft_data(transaction: Dict[str, Any]) -> Dict[
             transaction["nft_7day_avg_price"] = 0
             
     except Exception as e:
-        # If collection statistics not found or error, try fallback to owner's items
-        try:
-            owner = transaction.get("to_address", "")
-            if owner:
-                items = await items_by_owner(owner, size=1)
-                total = items.get("total", 0) or 0
-                # Use owner's item count as a rough indicator
-                if total > 0:
-                    transaction["nft_num_owners"] = max(1, min(total, 10000))
-                    transaction["nft_total_sales"] = total
-                # Keep other default values (0)
-        except Exception:
-            # Keep default values (all 0)
-            pass
+        # For any other error (not 404), log and set defaults
+        logger.warning(f"Error enriching NFT data for {contract_address[:10]}...: {e}")
+        _set_default_nft_fields(transaction)
     finally:
         enrich_time = time.time() - enrich_start
-        logger.debug(f"⏱️ [TIMING] NFT enrichment for {contract_address[:10]}...: {enrich_time:.2f}s")
+        logger.debug(f"⏱️ [TIMING] NFT enrichment for {contract_address[:10]}...: {enrich_time:.3f}s")
     
     return transaction
 

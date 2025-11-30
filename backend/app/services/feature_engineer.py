@@ -203,10 +203,17 @@ def extract_transaction_level_features(transactions: List[Dict[str, Any]]) -> np
     is_mint = is_mint_count / len(transactions) if transactions else 0
     
     # 11. High gas (ratio of transactions above 75th percentile)
+    # For single transaction, use a fixed threshold (21000 is standard gas for simple transfer)
     if gas_used_list:
-        gas_75th = np.percentile(gas_used_list, 75)
-        high_gas_count = sum(1 for g in gas_used_list if g > gas_75th)
-        high_gas = high_gas_count / len(gas_used_list)
+        if len(gas_used_list) == 1:
+            # Single transaction: use fixed threshold (21000 = standard transfer, 100000 = high complexity)
+            gas_threshold = 100000  # Transactions above 100k gas are considered "high gas"
+            high_gas = 1.0 if gas_used_list[0] > gas_threshold else 0.0
+        else:
+            # Multiple transactions: use 75th percentile
+            gas_75th = np.percentile(gas_used_list, 75)
+            high_gas_count = sum(1 for g in gas_used_list if g > gas_75th)
+            high_gas = high_gas_count / len(gas_used_list)
     else:
         high_gas = 0
     
