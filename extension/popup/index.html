@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web3 Antivirus</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Transaction Warning View (shown when intercepting transaction) -->
+    <div id="transaction-view" class="view hidden">
+      <div class="header">
+        <h1>WEB3 ANTIVIRUS</h1>
+      </div>
+      
+      <div class="warning-section">
+        <div class="risk-badge high-risk">
+          <span class="risk-icon">⚡</span>
+          <span class="risk-text">High-risk transaction</span>
+        </div>
+        <p class="warning-message">We found critical risks.</p>
+      </div>
+      
+      <div class="transaction-details">
+        <div class="detail-item">
+          <label>From Address</label>
+          <div class="address-value" id="from-address">-</div>
+        </div>
+        <div class="detail-item">
+          <label>To Address</label>
+          <div class="address-value" id="to-address">-</div>
+        </div>
+        <div class="detail-item">
+          <label>You're sending</label>
+          <div class="value-display">
+            <span class="eth-icon">Ξ</span>
+            <span id="eth-value">0.00</span>
+            <span class="usd-value" id="usd-value">($0.00)</span>
+          </div>
+        </div>
+        <div class="detail-item" id="nft-detail" style="display: none;">
+          <label>NFT</label>
+          <div class="nft-info" id="nft-info">-</div>
+        </div>
+      </div>
+      
+      <div class="risk-scores">
+        <div class="score-item" id="account-risk">
+          <div class="score-label">Account Risk</div>
+          <div class="score-value">-</div>
+        </div>
+        <div class="score-item" id="transaction-risk">
+          <div class="score-label">Transaction Risk</div>
+          <div class="score-value">-</div>
+        </div>
+      </div>
+      
+      <div class="tabs">
+        <button class="tab-button active" data-tab="risk-detail">Risk Detail</button>
+      </div>
+      
+      <div class="tab-content" id="risk-detail-tab">
+        <div class="risk-explanations" id="risk-explanations">
+          Loading risk analysis...
+        </div>
+      </div>
+      
+      <div class="actions">
+        <a href="#" id="etherscan-link" target="_blank" class="etherscan-button">
+          View on Etherscan
+        </a>
+        <div class="decision-buttons">
+          <button class="btn btn-reject" id="reject-btn">Reject</button>
+          <button class="btn btn-continue" id="continue-btn">
+            Approve to MetaMask
+            <span class="warning-icon">⚠️</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Default View (shown when no transaction) -->
+    <div id="default-view" class="view">
+      <div class="header">
+        <h1>WEB3 ANTIVIRUS</h1>
+        <p class="subtitle">Real-time scam protection</p>
+      </div>
+      
+      <div class="sections">
+        <!-- Analyze Account Section -->
+        <div class="section">
+          <h2>Analyze Account</h2>
+          <div class="input-group">
+            <input 
+              type="text" 
+              id="account-input" 
+              placeholder="Enter wallet address (0x...)"
+              class="input-field"
+            />
+            <button class="btn btn-primary" id="analyze-account-btn">Analyze</button>
+          </div>
+          <div class="result-box" id="account-result" style="display: none;">
+            <div class="risk-score-display" id="account-risk-score"></div>
+            <div class="explanation" id="account-explanation"></div>
+          </div>
+        </div>
+        
+        <!-- Analyze Transaction Section -->
+        <div class="section">
+          <h2>Analyze Transaction</h2>
+          <div class="input-group">
+            <input 
+              type="text" 
+              id="transaction-input" 
+              placeholder="Transaction hash or details"
+              class="input-field"
+            />
+            <button class="btn btn-primary" id="analyze-transaction-btn">Analyze</button>
+          </div>
+          <div class="result-box" id="transaction-result" style="display: none;">
+            <div class="risk-score-display" id="transaction-risk-score"></div>
+            <div class="explanation" id="transaction-explanation"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
+

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScamRadar</title>
+  <link rel="stylesheet" href="./popup/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Transaction Warning View (shown when intercepting transaction) -->
+    <div id="transaction-view" class="view hidden">
+      <div class="header">
+        <div class="header-content">
+          <img src="./images/logo.png" alt="ScamRadar" class="header-logo" />
+          <h1>ScamRadar</h1>
+        </div>
+      </div>
+      
+      <div class="warning-section" id="warning-section" style="display: none;">
+        <div class="risk-badge high-risk" id="risk-badge">
+          <span class="risk-icon">⚡</span>
+          <span class="risk-text">High-risk transaction</span>
+        </div>
+        <p class="warning-message" id="warning-message">We found critical risks.</p>
+      </div>
+      
+      <div class="transaction-details">
+        <div class="detail-item">
+          <label>From Address</label>
+          <div class="address-value" id="from-address">-</div>
+        </div>
+        <div class="detail-item">
+          <label>To Address</label>
+          <div class="address-value" id="to-address">-</div>
+          <div id="etherscan-warning" class="etherscan-warning" style="display: none; margin-top: 8px; padding: 8px 12px; background: rgba(244, 67, 54, 0.15); border-left: 3px solid #F44336; border-radius: 4px; font-size: 12px; color: #F44336; font-weight: 600;">
+            ⚠️ This account has been reported on Etherscan
+          </div>
+          <a href="#" id="etherscan-link" target="_blank" class="etherscan-link" style="display: block; margin-top: 4px; font-size: 12px; color: #667eea; text-decoration: none;">
+            View account on Etherscan
+          </a>
+        </div>
+        <div class="detail-item" id="you-send-detail">
+          <label>You send</label>
+          <div id="you-send-content">
+            <div class="value-display" id="eth-value-display">
+              <span class="eth-icon">Ξ</span>
+              <span id="eth-value">0.00</span>
+              <span class="usd-value" id="usd-value">($0.00)</span>
+            </div>
+            <div id="nft-send-info" style="display: none; margin-top: 8px;">
+              <div class="nft-send-item">
+                <span class="nft-token-id" id="nft-token-id">#0</span>
+                <span class="nft-contract" id="nft-contract">0x...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="detail-item" id="network-detail">
+          <label>Network</label>
+          <div class="network-display" id="network-display">-</div>
+        </div>
+        <div class="detail-item" id="request-from-detail">
+          <label>Request from</label>
+          <div class="request-from-display" id="request-from-display">-</div>
+        </div>
+        <div class="detail-item" id="network-fee-detail">
+          <label>Network fee</label>
+          <div class="network-fee-display" id="network-fee-display">-</div>
+        </div>
+        <div class="detail-item" id="gas-price-detail">
+          <label>Gas Price</label>
+          <div class="gas-price-display" id="gas-price-display">-</div>
+        </div>
+        <div class="detail-item" id="gas-used-detail">
+          <label>Gas Used</label>
+          <div class="gas-used-display" id="gas-used-display">-</div>
+        </div>
+      </div>
+      
+      <div class="risk-scores">
+        <div class="score-item" id="account-risk">
+          <div class="score-label">Account Risk</div>
+          <div class="score-value">-</div>
+        </div>
+        <div class="score-item" id="transaction-risk">
+          <div class="score-label">Transaction Risk</div>
+          <div class="score-value">-</div>
+        </div>
+      </div>
+      
+      <div class="tabs">
+        <button class="tab-button active" data-tab="risk-detail">Risk Detail</button>
+      </div>
+      
+      <div class="tab-content" id="risk-detail-tab">
+        <div class="risk-explanations" id="risk-explanations">
+          Loading risk analysis...
+        </div>
+      </div>
+      
+      <div class="actions">
+        <div class="decision-buttons">
+          <button class="btn btn-reject" id="reject-btn">Reject</button>
+          <button class="btn btn-continue" id="continue-btn">
+            Approve to MetaMask
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Default View (shown when no transaction) -->
+    <div id="default-view" class="view">
+      <div class="header">
+        <div class="header-content">
+          <img src="./images/logo.png" alt="ScamRadar" class="header-logo" />
+          <h1>ScamRadar</h1>
+        </div>
+        <p class="subtitle">Real-time scam protection</p>
+      </div>
+      
+      <div class="sections">
+        <!-- Analyze Account Section -->
+        <div class="section">
+          <h2>Analyze Account</h2>
+          <div class="input-group">
+            <input 
+              type="text" 
+              id="account-input" 
+              placeholder="Enter wallet address (0x...)"
+              class="input-field"
+            />
+            <button class="btn btn-primary" id="analyze-account-btn">Analyze</button>
+          </div>
+          <div class="result-box" id="account-result" style="display: none;">
+            <div class="risk-score-display" id="account-risk-score"></div>
+            <div class="explanation" id="account-explanation"></div>
+          </div>
+        </div>
+        
+        <!-- Analyze Transaction Section -->
+        <div class="section">
+          <h2>Analyze Transaction</h2>
+          <div class="input-group">
+            <input 
+              type="text" 
+              id="transaction-input" 
+              placeholder="Transaction hash or details"
+              class="input-field"
+            />
+            <button class="btn btn-primary" id="analyze-transaction-btn">Analyze</button>
+          </div>
+          <div class="result-box" id="transaction-result" style="display: none;">
+            <div class="risk-score-display" id="transaction-risk-score"></div>
+            <div class="explanation" id="transaction-explanation"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <script type="module" src="./popup/main.ts"></script>
+</body>
+</html>
+
