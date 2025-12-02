@@ -211,10 +211,21 @@
     return false;
   }
   
-  // Handle transaction or signing requests
+  // Handle transaction or signing requests as a strict gatekeeper.
+  // MetaMask WILL ONLY be called after the user explicitly approves in the extension popup.
   async function handleTransactionOrSignRequest(args) {
-    const tx = args.params && args.params[0];
+    let tx;
+    try {
+      tx = args && args.params && args.params[0];
+    } catch (e) {
+      console.error('[Web3 Antivirus] Error reading transaction params, rejecting request', e);
+      throw new Error('Invalid transaction parameters');
+    }
+
+    // If params are missing or malformed, reject immediately so dApp stops loading,
+    // and MetaMask is NEVER called for this request.
     if (!tx) {
+      console.warn('[Web3 Antivirus] No transaction object in params, rejecting request');
       throw new Error('Invalid transaction parameters');
     }
     
@@ -232,114 +243,118 @@
       params: args.params
     };
     
-    // Generate unique request ID
-    const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    
-    console.log('[Web3 Antivirus] Sending postMessage with data:', requestData);
-    
-    // Send transaction data to extension via postMessage
-    window.postMessage({
-      type: 'WEB3_ANTIVIRUS_TRANSACTION',
-      data: requestData,
-      requestId: requestId
-    }, '*');
-    
-    // Wait for user decision
-    return new Promise(function(resolve, reject) {
-      let timeoutId;
-      let decisionReceived = false;
+    try {
+      // Generate unique request ID to bind popup decision with this specific request
+      const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
       
-      // Function to process decision
-      function processDecision(decision, decisionRequestId) {
-        if (decisionReceived) return;
-        if (decisionRequestId && decisionRequestId !== requestId) {
-          console.log('[Web3 Antivirus] Decision requestId mismatch:', decisionRequestId, 'expected:', requestId);
-          return; // Not for this request
-        }
+      console.log('[Web3 Antivirus] Sending postMessage with data:', requestData);
+      
+      // Send transaction data to extension via postMessage
+      window.postMessage({
+        type: 'WEB3_ANTIVIRUS_TRANSACTION',
+        data: requestData,
+        requestId: requestId
+      }, '*');
+      
+      // Wait for user decision from extension popup
+      return await new Promise(function(resolve, reject) {
+        let timeoutId;
+        let decisionReceived = false;
         
-        decisionReceived = true;
-        clearInterval(checkDecision);
-        clearTimeout(timeoutId);
-        
-        if (decision === 'approve') {
-          console.log('[Web3 Antivirus] Transaction APPROVED by user, forwarding to MetaMask');
-          // Forward to original MetaMask provider
-          if (originalMetaMaskProvider) {
-            // Use the original provider directly without changing window.ethereum
-            // This way MetaMask won't detect that window.ethereum changed
-            originalMetaMaskProvider.request(args)
-              .then(result => {
-                console.log('[Web3 Antivirus] Transaction forwarded successfully');
-                resolve(result);
-              })
-              .catch(err => {
-                console.error('[Web3 Antivirus] Error forwarding transaction:', err);
-                reject(err);
-              });
-          } else {
-            // If no original provider, try to find MetaMask provider
-            // MetaMask might be in window.ethereum.providers array
-            if (window.ethereum && window.ethereum.providers) {
-              const metamaskProvider = window.ethereum.providers.find((p) => p.isMetaMask);
-              if (metamaskProvider) {
-                originalMetaMaskProvider = metamaskProvider;
-                metamaskProvider.request(args)
-                  .then(result => resolve(result))
-                  .catch(err => reject(err));
+        // Function to process decision coming from extension (popup/content script)
+        function processDecision(decision, decisionRequestId) {
+          if (decisionReceived) return;
+          if (decisionRequestId && decisionRequestId !== requestId) {
+            console.log('[Web3 Antivirus] Decision requestId mismatch:', decisionRequestId, 'expected:', requestId);
+            return; // Not for this request
+          }
+          
+          decisionReceived = true;
+          clearInterval(checkDecision);
+          clearTimeout(timeoutId);
+          
+          if (decision === 'approve') {
+            console.log('[Web3 Antivirus] Transaction APPROVED by user, forwarding to MetaMask');
+            // Forward to original MetaMask provider
+            if (originalMetaMaskProvider) {
+              // Use the original provider directly without changing window.ethereum
+              // This way MetaMask won't detect that window.ethereum changed
+              originalMetaMaskProvider.request(args)
+                .then(result => {
+                  console.log('[Web3 Antivirus] Transaction forwarded successfully');
+                  resolve(result);
+                })
+                .catch(err => {
+                  console.error('[Web3 Antivirus] Error forwarding transaction:', err);
+                  reject(err);
+                });
+            } else {
+              // If no original provider, try to find MetaMask provider
+              // MetaMask might be in window.ethereum.providers array
+              if (window.ethereum && window.ethereum.providers) {
+                const metamaskProvider = window.ethereum.providers.find((p) => p.isMetaMask);
+                if (metamaskProvider) {
+                  originalMetaMaskProvider = metamaskProvider;
+                  metamaskProvider.request(args)
+                    .then(result => resolve(result))
+                    .catch(err => reject(err));
+                } else {
+                  reject(new Error('No wallet provider available'));
+                }
               } else {
                 reject(new Error('No wallet provider available'));
               }
-            } else {
-              reject(new Error('No wallet provider available'));
+            }
+          } else {
+            console.log('[Web3 Antivirus] Transaction REJECTED by user');
+            reject(new Error('Transaction rejected by Web3 Antivirus'));
+          }
+        }
+        
+        // Check for decision set directly on window by injected scripts
+        const checkDecision = setInterval(function() {
+          if (window._web3AntivirusDecision) {
+            const decision = window._web3AntivirusDecision.decision;
+            const decisionRequestId = window._web3AntivirusDecision.requestId;
+            
+            if (!decisionRequestId || decisionRequestId === requestId) {
+              delete window._web3AntivirusDecision;
+              processDecision(decision, decisionRequestId);
             }
           }
-        } else {
-          console.log('[Web3 Antivirus] Transaction REJECTED by user');
-          reject(new Error('Transaction rejected by Web3 Antivirus'));
-        }
-      }
-      
-      // Check for decision in window object
-      const checkDecision = setInterval(function() {
-        if (window._web3AntivirusDecision) {
-          const decision = window._web3AntivirusDecision.decision;
-          const decisionRequestId = window._web3AntivirusDecision.requestId;
-          
-          if (!decisionRequestId || decisionRequestId === requestId) {
-            delete window._web3AntivirusDecision;
-            processDecision(decision, decisionRequestId);
+        }, 100);
+        
+        // Also listen for postMessage events from content script
+        const messageHandler = function(event) {
+          if (event.data && event.data.type === 'WEB3_ANTIVIRUS_DECISION') {
+            const decision = event.data.decision;
+            const decisionRequestId = event.data.requestId;
+            
+            if (!decisionRequestId || decisionRequestId === requestId) {
+              window.removeEventListener('message', messageHandler);
+              processDecision(decision, decisionRequestId);
+            }
           }
-        }
-      }, 100);
-      
-      // Also listen for postMessage events from content script
-      const messageHandler = function(event) {
-        if (event.data && event.data.type === 'WEB3_ANTIVIRUS_DECISION') {
-          const decision = event.data.decision;
-          const decisionRequestId = event.data.requestId;
-          
-          if (!decisionRequestId || decisionRequestId === requestId) {
-            window.removeEventListener('message', messageHandler);
-            processDecision(decision, decisionRequestId);
+        };
+        window.addEventListener('message', messageHandler);
+        
+        // Timeout after 5 minutes – if user never decides, treat as rejection
+        timeoutId = setTimeout(function() {
+          clearInterval(checkDecision);
+          window.removeEventListener('message', messageHandler);
+          if (!decisionReceived) {
+            console.warn('[Web3 Antivirus] Decision timeout, rejecting transaction');
+            reject(new Error('Transaction request timeout'));
           }
-        }
-      };
-      window.addEventListener('message', messageHandler);
-      
-      // Timeout after 5 minutes
-      timeoutId = setTimeout(function() {
-        clearInterval(checkDecision);
-        window.removeEventListener('message', messageHandler);
-        if (!decisionReceived) {
-          console.warn('[Web3 Antivirus] Decision timeout, rejecting transaction');
-          reject(new Error('Transaction request timeout'));
-        }
-      }, 300000);
-    });
+        }, 300000);
+      });
+    } catch (e) {
+      // Any runtime error in our gatekeeper logic should NOT auto-forward to MetaMask,
+      // otherwise MetaMask could still popup without explicit extension approval.
+      console.error('[Web3 Antivirus] Error in handleTransactionOrSignRequest, rejecting request', e);
+      throw e instanceof Error ? e : new Error('Transaction blocked by Web3 Antivirus');
+    }
   }
-  
-  // Don't block MetaMask popup - let it open normally
-  // We just want to intercept the transaction, not block MetaMask
   
   // Replace window.ethereum immediately
   function replaceMetaMaskProvider() {
@@ -357,9 +372,6 @@
       window.web3.currentProvider = replacement;
     }
   }
-  
-  // Don't block MetaMask popup - allow it to open normally
-  // We just intercept the transaction to show our analysis popup alongside
   
   // Try to replace immediately
   replaceMetaMaskProvider();

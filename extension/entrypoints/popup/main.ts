@@ -533,29 +533,125 @@ function showDefaultView() {
   transactionView?.classList.add('hidden');
 }
 
+// Helper: circular progress animation for popup (fake, stage-based)
+function animateCircularProgress(baseId: string) {
+  const circle = document.getElementById(`circle-progress-${baseId}`) as SVGCircleElement | null;
+  const percentEl = document.getElementById(`circle-percent-${baseId}`);
+  const stageEl = document.getElementById(`circle-stage-${baseId}`);
+
+  if (!circle || !percentEl || !stageEl) return;
+
+  const radius = circle.r.baseVal.value;
+  const circumference = 2 * Math.PI * radius;
+
+  circle.style.strokeDasharray = `${circumference} ${circumference}`;
+  circle.style.strokeDashoffset = `${circumference}`;
+
+  const stages = [
+    { value: 20, label: 'Fetching data...' },
+    { value: 45, label: 'Analyzing account...' },
+    { value: 70, label: 'Scanning transaction...' },
+    { value: 90, label: 'Generating explanations...' },
+    { value: 98, label: 'Finalizing...' }
+  ];
+
+  let currentStage = 0;
+  let currentValue = 0;
+
+  const setProgress = (p: number) => {
+    const clamped = Math.max(0, Math.min(100, p));
+    const offset = circumference - (clamped / 100) * circumference;
+    circle.style.strokeDashoffset = `${offset}`;
+    percentEl.textContent = `${Math.round(clamped)}%`;
+  };
+
+  setProgress(5);
+  stageEl.textContent = stages[0]?.label || 'Analyzing...';
+
+  const interval = setInterval(() => {
+    const stage = stages[currentStage];
+    if (!stage) {
+      clearInterval(interval);
+      return;
+    }
+
+    stageEl.textContent = stage.label;
+    const target = stage.value;
+    const stepCount = 20;
+    const step = (target - currentValue) / stepCount;
+    let steps = 0;
+
+    const stepInterval = setInterval(() => {
+      currentValue += step;
+      steps += 1;
+      setProgress(currentValue);
+      if (steps >= stepCount) {
+        clearInterval(stepInterval);
+      }
+    }, 40);
+
+    currentStage += 1;
+  }, 900);
+}
+
+// Helper: show circular progress in the popup risk score cards
+function showPopupRiskProgress() {
+  const makeCard = (label: string, idSuffix: string) => `
+    <div class="score-label">${label}</div>
+    <div class="score-value loading">
+      <div class="circle-progress-wrapper">
+        <svg class="circle-svg" width="92" height="92">
+          <circle class="circle-bg" cx="46" cy="46" r="36"></circle>
+          <circle class="circle-progress" id="circle-progress-${idSuffix}" cx="46" cy="46" r="36"></circle>
+        </svg>
+        <div class="circle-inner">
+          <div class="circle-percent" id="circle-percent-${idSuffix}">0%</div>
+          <div class="circle-stage" id="circle-stage-${idSuffix}">Initializing...</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (accountRiskEl) {
+    accountRiskEl.innerHTML = makeCard('Account Risk', 'account-popup');
+  }
+  if (transactionRiskEl) {
+    transactionRiskEl.innerHTML = makeCard('Transaction Risk', 'tx-popup');
+  }
+
+  // Kick off animations after DOM paint
+  setTimeout(() => {
+    animateCircularProgress('account-popup');
+    animateCircularProgress('tx-popup');
+  }, 50);
+}
+
+// Helper: show linear progress bar in Risk Detail section (popup alert)
+function showRiskDetailProgress() {
+  if (!riskExplanationsEl) return;
+
+  riskExplanationsEl.innerHTML = `
+    <div class="progress-container">
+      <div class="progress-bar-wrapper">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill-risk-detail" style="width: 5%;"></div>
+          <div class="progress-shine" id="progress-shine-risk-detail"></div>
+        </div>
+        <div class="progress-text" id="progress-text-risk-detail">10% • Initializing...</div>
+      </div>
+    </div>
+  `;
+
+  setTimeout(() => {
+    animateProgressBar('progress-fill-risk-detail', 'progress-text-risk-detail', 'progress-shine-risk-detail');
+  }, 50);
+}
+
 // Analyze transaction for popup
 async function analyzeTransactionForPopup(transactionData: any, recipientAddress?: string, contractAddress?: string) {
-  showLoading('risk-explanations');
-  
-  // Show loading for account risk
-  if (accountRiskEl) {
-    accountRiskEl.innerHTML = `
-      <div class="score-label">Account Risk</div>
-      <div class="score-value loading">
-        <div class="loading-spinner"></div>
-      </div>
-    `;
-  }
-  
-  // Show loading for transaction risk
-  if (transactionRiskEl) {
-    transactionRiskEl.innerHTML = `
-      <div class="score-label">Transaction Risk</div>
-      <div class="score-value loading">
-        <div class="loading-spinner"></div>
-      </div>
-    `;
-  }
+  // Show linear progress bar in Risk Detail + circular progress in score cards
+  showRiskDetailProgress();
+  showPopupRiskProgress();
   
   try {
     // Use resolved recipient address if provided, otherwise resolve it
@@ -948,9 +1044,9 @@ function formatNumber(value: number, featureName: string): string {
   
   // Handle zero values
   if (value === 0) {
-    // For gas price, show specific 0 value
+    // For gas price, show a simple 0 gwei to avoid misleading precision
     if (featureName.includes('gas_price') || featureName.includes('gasPrice')) {
-      return '0.00000000 gwei';
+      return '0 gwei';
     }
     return '0';
   }
@@ -1060,10 +1156,10 @@ function getRiskClass(risk: number | null | undefined): string {
 }
 
 function getRiskLevelText(risk: number | null | undefined): string {
-  if (!risk) return 'LESS RISKY';
+  if (!risk) return 'LOW';
   if (risk > 0.7) return 'HIGH';
   if (risk > 0.4) return 'MEDIUM';
-  return 'LESS RISKY';
+  return 'LOW';
 }
 
 // Calculate feature-specific risk level based on SHAP value and feature value
@@ -1096,7 +1192,7 @@ function getFeatureRiskLevel(shapValue: number, featureValue: number, featureNam
   }
   
   // Negative SHAP or neutral = low risk
-  return { level: 'LESS RISKY', class: 'low' };
+  return { level: 'LOW', class: 'low' };
 }
 
 function formatNumericalDetails(featureName: string, featureValue: number, accountData?: any, txData?: any): string {
@@ -1136,16 +1232,13 @@ function hideLoading(elementId: string) {
 function showProgressBar(scoreElementId: string, explanationElementId: string) {
   const scoreEl = document.getElementById(scoreElementId);
   const explanationEl = document.getElementById(explanationElementId);
-  
-  // Only show progress bar in explanation element to avoid duplicate display
-  // Score element will show loading spinner
+
   if (scoreEl) {
-    // Clear any existing classes that might interfere
+    // Keep score box simple: label + "Loading..." text, avoid duplicate bars
     scoreEl.className = '';
     scoreEl.innerHTML = `
-      <div class="loading">
-        <div class="spinner"></div>
-      </div>
+      <div class="score-label">${scoreElementId.includes('account') ? 'Account Risk' : 'Transaction Risk'}</div>
+      <div class="score-value loading-text">Loading...</div>
     `;
   }
   
@@ -1165,6 +1258,7 @@ function showProgressBar(scoreElementId: string, explanationElementId: string) {
     `;
     // Small delay to ensure DOM is updated
     setTimeout(() => {
+      animateProgressBar(`progress-fill-${scoreElementId}`, `progress-text-${scoreElementId}`, `progress-shine-${scoreElementId}`);
       animateProgressBar(`progress-fill-${explanationElementId}`, `progress-text-${explanationElementId}`, `progress-shine-${explanationElementId}`);
     }, 50);
   }
@@ -1194,12 +1288,12 @@ function animateProgressBar(fillId: string, textId: string, shineId?: string) {
   fillEl.style.opacity = '1';
   
   const stages = [
-    { progress: 15, text: 'Fetching transactions...' },
-    { progress: 35, text: 'Enriching NFT data...' },
-    { progress: 55, text: 'Extracting features...' },
-    { progress: 75, text: 'Running model prediction...' },
-    { progress: 90, text: 'Generating explanations...' },
-    { progress: 98, text: 'Finalizing analysis...' }
+    { progress: 10, text: '10% • Initializing...' },
+    { progress: 30, text: '30% • Fetching data...' },
+    { progress: 55, text: '55% • Extracting features...' },
+    { progress: 78, text: '78% • Running model...' },
+    { progress: 92, text: '92% • Generating explanations...' },
+    { progress: 99, text: '99% • Finalizing...' }
   ];
   
   let currentStage = 0;
@@ -1216,7 +1310,7 @@ function animateProgressBar(fillId: string, textId: string, shineId?: string) {
     } else {
       clearInterval(interval);
     }
-  }, 700); // Update every 700ms for smoother animation
+  }, 650); // Update every ~650ms for smooth animation
 }
 
 // Event listeners
