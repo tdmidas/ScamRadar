@@ -28,8 +28,8 @@ class Settings(BaseModel):
     # Etherscan API Key
     etherscan_api_key: str = os.getenv("ETHERSCAN_API_KEY", "")
     etherscan_keys: list[str] = []
-    etherscan_chainid: int = int(os.getenv("ETHERSCAN_CHAINID", "1"))  # 1 for Ethereum mainnet
-    
+    etherscan_chainid: int = int(os.getenv("ETHERSCAN_CHAINID", "11155111"))  # 11155111 for Sepolia testnet
+
     # Rarible API Key
     rarible_api_key: str = os.getenv("RARIBLE_API_KEY")
     
