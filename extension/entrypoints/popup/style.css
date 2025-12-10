@@ -1,22 +1,30 @@
-/* ScamRadar - Yellow Dark Gray Cozy Theme */
+/* ScamRadar - Cyan Dark Theme */
 :root {
-  --primary-yellow: #FFC107;
-  --dark-yellow: #FF8F00;
-  --darker-yellow: #FF6F00;
-  --light-yellow: #FFE082;
-  --white: #FFFFFF;
-  --dark-bg: #1A1A1A;
-  --dark-surface: #2A2A2A;
-  --darker-surface: #252525;
-  --text-primary: #E0E0E0;
-  --text-secondary: #B0B0B0;
-  --text-muted: #888888;
-  --danger-red: #F44336;
-  --warning-orange: #FF9800;
-  --success-green: #4CAF50;
-  --border-color: #3A3A3A;
-  --border-light: #4A4A4A;
+  /* Cyan primary */
+  --primary-yellow: #19d4ff;      /* Màu chính (cyan) */
+  --dark-yellow:  #05b0e6;        /* Cyan đậm hơn */
+  --darker-yellow:#0480ad;        /* Cyan rất đậm */
+  --light-yellow: #a8ecff;        /* Cyan nhạt dùng làm highlight */
+
+  /* Text & background */
+  --white: #ffffff;
+  --dark-bg: #050c14;
+  --dark-surface: #071824;
+  --darker-surface: #041019;
+
+  --text-primary: #e4f4ff;
+  --text-secondary: #a9c3d6;
+  --text-muted: #7f95a6;
+
+  /* Status colors giữ nguyên */
+  --danger-red: #f44336;
+  --warning-orange: #ff9800;
+  --success-green: #4caf50;
+
+  --border-color: #123043;
+  --border-light: #1b4863;
 }
+
 
 * {
   margin: 0;
@@ -26,7 +34,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background: radial-gradient(circle at top left, #2c2c2c, #121212 55%);
+  background: radial-gradient(circle at top left, #071824, #02060a 55%);
   color: var(--text-primary);
   width: 400px;
   max-height: 600px;
@@ -66,7 +74,7 @@ body {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at top left, rgba(255, 193, 7, 0.18), transparent 55%);
+  background: radial-gradient(circle at top left, rgba(25, 212, 255, 0.25), transparent 55%);
   opacity: 0.8;
   pointer-events: none;
 }
@@ -91,7 +99,7 @@ body {
   font-weight: 700;
   margin: 0;
   color: var(--primary-yellow);
-  text-shadow: 0 0 14px rgba(255, 193, 7, 0.55);
+  text-shadow: 0 0 14px rgba(25, 212, 255, 0.65);
 }
 
 .subtitle {
@@ -193,10 +201,10 @@ body {
   font-size: 12px;
   color: var(--text-primary);
   word-break: break-all;
-  background: rgba(255, 193, 7, 0.15);
+  background: rgba(25, 212, 255, 0.10);
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 193, 7, 0.3);
+  border: 1px solid rgba(25, 212, 255, 0.35);
 }
 
 .etherscan-link {
@@ -545,13 +553,13 @@ body {
   border: 1px solid var(--primary-yellow);
   font-size: 14px;
   transition: all 0.2s;
-  box-shadow: 0 2px 4px rgba(255, 193, 7, 0.2);
+  box-shadow: 0 2px 4px rgba(25, 212, 255, 0.25);
 }
 
 .etherscan-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(255, 193, 7, 0.3);
-  background: rgba(255, 193, 7, 0.1);
+  box-shadow: 0 4px 8px rgba(25, 212, 255, 0.35);
+  background: rgba(25, 212, 255, 0.10);
 }
 
 .decision-buttons {
@@ -755,7 +763,7 @@ body {
   line-height: 1.6;
   color: var(--text-secondary);
   padding: 14px 16px;
-  background: rgba(255, 193, 7, 0.12);
+  background: rgba(25, 212, 255, 0.10);
   border-radius: 12px;
   border-left: 4px solid var(--primary-yellow);
 }
@@ -803,8 +811,8 @@ body {
   width: 0%;
   position: relative;
   animation: progress-gradient 2s ease infinite, progress-glow 2s ease-in-out infinite;
-  box-shadow: 0 0 10px rgba(255, 193, 7, 0.5),
-              0 0 20px rgba(255, 193, 7, 0.3),
+  box-shadow: 0 0 10px rgba(25, 212, 255, 0.6),
+              0 0 20px rgba(25, 212, 255, 0.35),
               inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
@@ -838,9 +846,10 @@ body {
 
 @keyframes progress-glow {
   0%, 100% {
-    box-shadow: 0 0 10px rgba(255, 193, 7, 0.5),
-                0 0 20px rgba(255, 193, 7, 0.3),
+    box-shadow: 0 0 10px rgba(25, 212, 255, 0.6),
+                0 0 20px rgba(25, 212, 255, 0.35),
                 inset 0 1px 0 rgba(255, 255, 255, 0.2);
+
   }
   50% {
     box-shadow: 0 0 15px rgba(255, 193, 7, 0.7),

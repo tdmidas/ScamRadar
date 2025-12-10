@@ -1,12 +1,12 @@
 /* Web3 Antivirus - Yellow Dark White Theme */
 :root {
-  --primary-yellow: #FFC107;
+  --primary-yellow: var(--primary-light);
   --dark-yellow: #FF8F00;
   --darker-yellow: #FF6F00;
   --light-yellow: #FFE082;
   --white: #FFFFFF;
-  --dark-bg: #1A1A1A;
-  --dark-surface: #2D2D2D;
+  --dark-bg: var(--bg-secondary);
+  --dark-surface: var(--bg-tertiary);
   --text-primary: #FFFFFF;
   --text-secondary: #CCCCCC;
   --danger-red: #F44336;
@@ -846,7 +846,7 @@ body {
   font-size: 13px !important;
   line-height: 1.7 !important;
   padding: 16px !important;
-  background: #2D2D2D !important;
+  background: var(--bg-tertiary) !important;
   border-radius: 8px !important;
   border: 1px solid #444444 !important;
   margin-top: 12px !important;
@@ -868,12 +868,12 @@ body {
 .explanation-title {
   font-size: 15px !important;
   font-weight: 700 !important;
-  color: #FFC107 !important;
+  color: var(--primary-light) !important;
   margin-bottom: 10px !important;
   padding: 10px 14px !important;
   background: rgba(255, 193, 7, 0.15) !important;
   border-radius: 6px !important;
-  border-left: 4px solid #FFC107 !important;
+  border-left: 4px solid var(--primary-light) !important;
   display: block !important;
   box-sizing: border-box !important;
 }
