@@ -1,9 +1,9 @@
 /* Web3 Antivirus - Yellow Dark White Theme */
 :root {
-  --primary-yellow: #FFC107;
-  --dark-yellow: #FF8F00;
-  --darker-yellow: #FF6F00;
-  --light-yellow: #FFE082;
+  --primary-yellow: #00E5FF;
+  --dark-yellow: #00BCD4;
+  --darker-yellow: #0097A7;
+  --light-yellow: #B2EBF2;
   --white: #FFFFFF;
   --dark-bg: #1A1A1A;
   --dark-surface: #2D2D2D;
@@ -177,7 +177,7 @@ body {
   font-size: 12px;
   color: var(--primary-yellow);
   word-break: break-all;
-  background: rgba(255, 193, 7, 0.1);
+  background: rgba(0, 229, 255, 0.1);
   padding: 8px;
   border-radius: 4px;
 }
@@ -324,7 +324,7 @@ body {
 .loading-spinner {
   width: 20px;
   height: 20px;
-  border: 3px solid rgba(255, 193, 7, 0.3);
+  border: 3px solid rgba(0, 229, 255, 0.3);
   border-top-color: var(--primary-yellow);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -367,7 +367,7 @@ body {
 
 /* Tab Content */
 .tab-content {
-  background: radial-gradient(circle at top left, rgba(255, 193, 7, 0.12), transparent 55%),
+  background: radial-gradient(circle at top left, rgba(0, 229, 255, 0.12), transparent 55%),
               radial-gradient(circle at bottom right, rgba(255, 255, 255, 0.04), transparent 60%),
               var(--dark-surface);
   border-radius: 16px;
@@ -387,8 +387,8 @@ body {
   inset: 0;
   pointer-events: none;
   background: linear-gradient(135deg,
-    rgba(255, 193, 7, 0.32),
-    rgba(255, 193, 7, 0) 40%,
+    rgba(0, 229, 255, 0.32),
+    rgba(0, 229, 255, 0) 40%,
     rgba(255, 255, 255, 0.05) 75%,
     rgba(255, 255, 255, 0)
   );
@@ -428,7 +428,7 @@ body {
   position: absolute;
   inset: 0;
   background: linear-gradient(120deg,
-    rgba(255, 193, 7, 0.35),
+    rgba(0, 229, 255, 0.35),
     transparent 40%,
     transparent 60%,
     rgba(255, 255, 255, 0.08)
@@ -487,8 +487,8 @@ body {
   text-transform: uppercase;
   letter-spacing: 1px;
   color: #111111;
-  background: linear-gradient(135deg, #ffd54f, #ffb300);
-  box-shadow: 0 4px 10px rgba(255, 193, 7, 0.55);
+  background: linear-gradient(135deg, #7cf5ff, #00c8ff);
+  box-shadow: 0 4px 10px rgba(0, 229, 255, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.35);
 }
 
@@ -574,7 +574,7 @@ body {
   height: 6px;
   border-radius: 50%;
   background: var(--primary-yellow);
-  box-shadow: 0 0 8px rgba(255, 193, 7, 0.8);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.8);
 }
 
 .reference-link {
@@ -635,7 +635,7 @@ body {
 }
 
 .etherscan-button:hover {
-  background: rgba(255, 193, 7, 0.1);
+  background: rgba(0, 229, 255, 0.1);
 }
 
 .decision-buttons {
@@ -733,7 +733,7 @@ body {
 .input-field:focus {
   outline: none;
   border-color: var(--primary-yellow);
-  box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.2);
+  box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.2);
 }
 
 .result-box {
@@ -868,12 +868,12 @@ body {
 .explanation-title {
   font-size: 15px !important;
   font-weight: 700 !important;
-  color: #FFC107 !important;
+  color: var(--primary-yellow) !important;
   margin-bottom: 10px !important;
   padding: 10px 14px !important;
-  background: rgba(255, 193, 7, 0.15) !important;
+  background: rgba(0, 229, 255, 0.15) !important;
   border-radius: 6px !important;
-  border-left: 4px solid #FFC107 !important;
+  border-left: 4px solid var(--primary-yellow) !important;
   display: block !important;
   box-sizing: border-box !important;
 }
@@ -885,7 +885,7 @@ body {
   padding: 14px !important;
   background: rgba(255, 255, 255, 0.05) !important;
   border-radius: 6px !important;
-  border: 1px solid rgba(255, 193, 7, 0.25) !important;
+  border: 1px solid rgba(0, 229, 255, 0.25) !important;
   margin-top: 8px !important;
 }
 
@@ -932,8 +932,8 @@ body {
   width: 0%;
   position: relative;
   animation: progress-gradient 2s ease infinite, progress-glow 2s ease-in-out infinite;
-  box-shadow: 0 0 10px rgba(255, 193, 7, 0.5), 
-              0 0 20px rgba(255, 193, 7, 0.3),
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.5), 
+              0 0 20px rgba(0, 229, 255, 0.3),
               inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
@@ -967,13 +967,13 @@ body {
 
 @keyframes progress-glow {
   0%, 100% {
-    box-shadow: 0 0 10px rgba(255, 193, 7, 0.5), 
-                0 0 20px rgba(255, 193, 7, 0.3),
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.5), 
+                0 0 20px rgba(0, 229, 255, 0.3),
                 inset 0 1px 0 rgba(255, 255, 255, 0.2);
   }
   50% {
-    box-shadow: 0 0 15px rgba(255, 193, 7, 0.7), 
-                0 0 30px rgba(255, 193, 7, 0.5),
+    box-shadow: 0 0 15px rgba(0, 229, 255, 0.7), 
+                0 0 30px rgba(0, 229, 255, 0.5),
                 inset 0 1px 0 rgba(255, 255, 255, 0.3);
   }
 }
@@ -997,7 +997,7 @@ body {
   color: var(--primary-yellow);
   font-weight: 600;
   letter-spacing: 0.5px;
-  text-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
+  text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
   transition: all 0.3s ease;
 }
 

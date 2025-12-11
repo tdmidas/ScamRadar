@@ -40,7 +40,7 @@ export default defineConfig({
     },
     web_accessible_resources: [
       {
-        resources: ['inject.js'],
+        resources: ['inject.js', 'mock-popup.html'],
         matches: ['<all_urls>']
       }
     ]

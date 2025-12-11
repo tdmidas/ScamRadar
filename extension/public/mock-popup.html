@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ScamRadar Popup Mock</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 24px;
+    }
+    button {
+      background: #00bcd4;
+      color: #0b1726;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    button:hover {
+      background: #0097a7;
+    }
+    pre {
+      background: #111827;
+      border: 1px solid #1f2937;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 16px;
+      max-width: 640px;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <h2>Mock alert popup (no NFT send required)</h2>
+  <p>Use this page to seed placeholder data into storage, then open the popup in alert mode.</p>
+  <div>
+    <button id="launch">Seed dummy tx + open popup</button>
+    <button id="clear">Clear pendingTransaction</button>
+  </div>
+  <pre id="status">Idle</pre>
+
+  <script type="module">
+    const statusEl = document.getElementById('status');
+    const log = (msg, obj) => {
+      statusEl.textContent = [msg, obj ? JSON.stringify(obj, null, 2) : ''].filter(Boolean).join('\n');
+    };
+
+    const dummyTx = {
+      from: '0x1111111111111111111111111111111111111111',
+      to: '0x2222222222222222222222222222222222222222',
+      value: '0xDE0B6B3A7640000', // 1 ETH
+      gasPrice: '0x59682f00',      // ~1.5 gwei
+      gas: '0x5208',               // 21000
+      chainId: '0x1',              // Ethereum mainnet
+      data: '0x',                  // no NFT payload; pure value transfer
+      origin: 'https://mock.phishing.test',
+    };
+
+    document.getElementById('launch')?.addEventListener('click', () => {
+      chrome.storage.local.set(
+        {
+          pendingTransaction: dummyTx,
+          transactionTimestamp: Date.now(),
+        },
+        () => {
+          log('Seeded pendingTransaction. Opening popup in alert mode...', dummyTx);
+          // Built popup lives at popup.html (per manifest default_popup)
+          const popupUrl = chrome.runtime.getURL('popup.html?source=alert&mock=1');
+          window.open(popupUrl, '_blank');
+        }
+      );
+    });
+
+    document.getElementById('clear')?.addEventListener('click', () => {
+      chrome.storage.local.remove(['pendingTransaction', 'transactionTimestamp'], () => {
+        log('Cleared pendingTransaction.');
+      });
+    });
+  </script>
+</body>
+</html>
+

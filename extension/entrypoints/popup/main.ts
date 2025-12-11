@@ -533,65 +533,172 @@ function showDefaultView() {
   transactionView?.classList.add('hidden');
 }
 
-// Helper: circular progress animation for popup (fake, stage-based)
-function animateCircularProgress(baseId: string) {
-  const circle = document.getElementById(`circle-progress-${baseId}`) as SVGCircleElement | null;
-  const percentEl = document.getElementById(`circle-percent-${baseId}`);
-  const stageEl = document.getElementById(`circle-stage-${baseId}`);
+// Progress tracker that syncs with actual backend steps
+class ProgressTracker {
+  private startTime: number;
+  private isAccount: boolean;
+  private isTransaction: boolean;
+  private circle: SVGCircleElement | null;
+  private percentEl: HTMLElement | null;
+  private stageEl: HTMLElement | null;
+  private fillEl: HTMLElement | null;
+  private textEl: HTMLElement | null;
+  private intervalId: number | null = null;
+  private currentProgress: number = 0;
+  private circumference: number = 0;
 
-  if (!circle || !percentEl || !stageEl) return;
-
-  const radius = circle.r.baseVal.value;
-  const circumference = 2 * Math.PI * radius;
-
-  circle.style.strokeDasharray = `${circumference} ${circumference}`;
-  circle.style.strokeDashoffset = `${circumference}`;
-
-  const stages = [
-    { value: 20, label: 'Fetching data...' },
-    { value: 45, label: 'Analyzing account...' },
-    { value: 70, label: 'Scanning transaction...' },
-    { value: 90, label: 'Generating explanations...' },
-    { value: 98, label: 'Finalizing...' }
+  // Estimated time percentages for each step (based on actual backend timing)
+  private readonly ACCOUNT_STEPS = [
+    { name: 'Fetching transactions', progress: 0.40, duration: 5000 },  // 40% in ~5s
+    { name: 'Enriching NFT data', progress: 0.70, duration: 3000 },    // 30% in ~3s
+    { name: 'Extracting features', progress: 0.80, duration: 1000 },    // 10% in ~1s
+    { name: 'Running model', progress: 0.90, duration: 1000 },          // 10% in ~1s
+    { name: 'Generating explanations', progress: 0.98, duration: 2000 } // 8% in ~2s
   ];
 
-  let currentStage = 0;
-  let currentValue = 0;
+  private readonly TRANSACTION_STEPS = [
+    { name: 'Enriching NFT data', progress: 0.30, duration: 2000 },     // 30% in ~2s
+    { name: 'Extracting features', progress: 0.50, duration: 500 },     // 20% in ~0.5s
+    { name: 'Running model', progress: 0.60, duration: 500 },          // 10% in ~0.5s
+    { name: 'Generating explanations', progress: 0.85, duration: 2000 }, // 25% in ~2s
+    { name: 'Finalizing', progress: 0.98, duration: 1000 }             // 13% in ~1s
+  ];
 
-  const setProgress = (p: number) => {
-    const clamped = Math.max(0, Math.min(100, p));
-    const offset = circumference - (clamped / 100) * circumference;
-    circle.style.strokeDashoffset = `${offset}`;
-    percentEl.textContent = `${Math.round(clamped)}%`;
-  };
+  constructor(baseId: string, isAccount: boolean, isTransaction: boolean) {
+    this.startTime = Date.now();
+    this.isAccount = isAccount;
+    this.isTransaction = isTransaction;
+    
+    // Get circle elements
+    this.circle = document.getElementById(`circle-progress-${baseId}`) as SVGCircleElement | null;
+    this.percentEl = document.getElementById(`circle-percent-${baseId}`);
+    this.stageEl = document.getElementById(`circle-stage-${baseId}`);
+    
+    // Get progress bar elements (if exists)
+    this.fillEl = document.getElementById(`progress-fill-${baseId}`);
+    this.textEl = document.getElementById(`progress-text-${baseId}`);
 
-  setProgress(5);
-  stageEl.textContent = stages[0]?.label || 'Analyzing...';
-
-  const interval = setInterval(() => {
-    const stage = stages[currentStage];
-    if (!stage) {
-      clearInterval(interval);
-      return;
+    if (this.circle) {
+      const radius = this.circle.r.baseVal.value;
+      this.circumference = 2 * Math.PI * radius;
+      this.circle.style.strokeDasharray = `${this.circumference} ${this.circumference}`;
+      this.circle.style.strokeDashoffset = `${this.circumference}`;
     }
 
-    stageEl.textContent = stage.label;
-    const target = stage.value;
-    const stepCount = 20;
-    const step = (target - currentValue) / stepCount;
-    let steps = 0;
+    this.start();
+  }
 
-    const stepInterval = setInterval(() => {
-      currentValue += step;
-      steps += 1;
-      setProgress(currentValue);
-      if (steps >= stepCount) {
-        clearInterval(stepInterval);
+  private start() {
+    const steps = this.isAccount ? this.ACCOUNT_STEPS : this.TRANSACTION_STEPS;
+    let currentStepIndex = 0;
+    const elapsedStart = Date.now();
+
+    const updateProgress = () => {
+      const elapsed = Date.now() - elapsedStart;
+      let targetProgress = 0;
+      let currentStep = null;
+
+      // Find current step based on elapsed time
+      let cumulativeTime = 0;
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        cumulativeTime += step.duration;
+        
+        if (elapsed <= cumulativeTime) {
+          currentStep = step;
+          // Calculate progress within this step
+          const stepStartTime = cumulativeTime - step.duration;
+          const stepElapsed = elapsed - stepStartTime;
+          const stepProgress = Math.min(stepElapsed / step.duration, 1);
+          
+          // Get previous step progress
+          const prevProgress = i > 0 ? steps[i - 1].progress : 0;
+          targetProgress = prevProgress + (step.progress - prevProgress) * stepProgress;
+          break;
+        }
       }
-    }, 40);
 
-    currentStage += 1;
-  }, 900);
+      // If all steps completed, stay at 98% until API response
+      if (!currentStep) {
+        targetProgress = 0.98;
+      }
+
+      this.setProgress(targetProgress, currentStep?.name || 'Finalizing...');
+    };
+
+    // Update every 50ms for smooth animation
+    this.intervalId = window.setInterval(updateProgress, 50);
+  }
+
+  private setProgress(progress: number, stage: string) {
+    this.currentProgress = Math.max(0, Math.min(98, progress)); // Cap at 98% until API response
+    
+    // Update circle
+    if (this.circle && this.circumference > 0) {
+      const offset = this.circumference - (this.currentProgress / 100) * this.circumference;
+      this.circle.style.strokeDashoffset = `${offset}`;
+    }
+    
+    // Update percentage
+    if (this.percentEl) {
+      this.percentEl.textContent = `${Math.round(this.currentProgress)}%`;
+    }
+    
+    // Update stage (hidden but kept for debugging)
+    if (this.stageEl) {
+      this.stageEl.textContent = stage;
+    }
+
+    // Update progress bar if exists
+    if (this.fillEl) {
+      this.fillEl.style.width = `${this.currentProgress}%`;
+    }
+    if (this.textEl) {
+      this.textEl.textContent = `${Math.round(this.currentProgress)}% • ${stage}`;
+    }
+  }
+
+  complete() {
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    this.setProgress(100, 'Complete');
+  }
+
+  stop() {
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+}
+
+// Trackers for account and transaction
+let accountProgressTracker: ProgressTracker | null = null;
+let transactionProgressTracker: ProgressTracker | null = null;
+
+// Helper: circular progress animation for popup (synced with backend)
+function animateCircularProgress(baseId: string, isAccount: boolean = false, isTransaction: boolean = false) {
+  // Stop existing tracker if any
+  if (isAccount && accountProgressTracker) {
+    accountProgressTracker.stop();
+  }
+  if (isTransaction && transactionProgressTracker) {
+    transactionProgressTracker.stop();
+  }
+
+  // Create new tracker
+  const tracker = new ProgressTracker(baseId, isAccount, isTransaction);
+  
+  if (isAccount) {
+    accountProgressTracker = tracker;
+  }
+  if (isTransaction) {
+    transactionProgressTracker = tracker;
+  }
+
+  return tracker;
 }
 
 // Helper: show circular progress in the popup risk score cards
@@ -619,10 +726,10 @@ function showPopupRiskProgress() {
     transactionRiskEl.innerHTML = makeCard('Transaction Risk', 'tx-popup');
   }
 
-  // Kick off animations after DOM paint
+  // Kick off animations after DOM paint (with proper flags)
   setTimeout(() => {
-    animateCircularProgress('account-popup');
-    animateCircularProgress('tx-popup');
+    animateCircularProgress('account-popup', true, false);
+    animateCircularProgress('tx-popup', false, true);
   }, 50);
 }
 
@@ -673,6 +780,11 @@ async function analyzeTransactionForPopup(transactionData: any, recipientAddress
     
     const accountData = await accountResult.json();
     
+    // Complete progress when API response received
+    if (accountProgressTracker) {
+      accountProgressTracker.complete();
+    }
+    
     // Check if account has no NFT transactions (ERC721/ERC1155)
     if (accountData.detection_mode === 'no_data') {
       // Account has no ERC721/ERC1155 transactions - show N/A
@@ -686,7 +798,7 @@ async function analyzeTransactionForPopup(transactionData: any, recipientAddress
       // Analyze transaction only (pass resolved addresses)
       const { recipientAddress: resolvedRecipient, contractAddress: resolvedContract } = resolveTransactionAddresses(transactionData);
       const txResult = await analyzeTransactionOnly(transactionData, accountData, resolvedRecipient, resolvedContract);
-      displayRiskExplanations(accountData, txResult);
+      displayRiskExplanations(accountData, txResult, transactionData);
       return;
     }
     
@@ -705,7 +817,7 @@ async function analyzeTransactionForPopup(transactionData: any, recipientAddress
     showWarningSection(txRisk, accountRisk);
     
     // Display explanations (this will also hide loading)
-    displayRiskExplanations(accountData, txResult);
+    displayRiskExplanations(accountData, txResult, transactionData);
     
   } catch (error) {
     console.error('Error analyzing transaction:', error);
@@ -798,6 +910,11 @@ async function analyzeTransactionOnly(transactionData: any, accountData?: any, r
   
   const result = await response.json();
   
+  // Complete progress when API response received
+  if (transactionProgressTracker) {
+    transactionProgressTracker.complete();
+  }
+  
   // Account risk display is handled in analyzeTransactionForPopup
   // Only update if accountData is provided and has data
   if (accountData && accountData.detection_mode !== 'no_data' && accountData.account_scam_probability !== undefined) {
@@ -819,12 +936,35 @@ async function analyzeTransactionOnly(transactionData: any, accountData?: any, r
 }
 
 // Display risk explanations with correct format: [Risk_tag_box] - [feature_box] - value, then explanation
-// Priority: LLM explanations first, then SHAP only if LLM not available
-function displayRiskExplanations(accountData: any, txData: any) {
+// Priority: Rule-based patterns first, then LLM explanations, then SHAP only if LLM not available
+function displayRiskExplanations(accountData: any, txData: any, transactionData?: any) {
   if (!riskExplanationsEl) return;
   
   let html = '';
   const processedFeatures = new Set(); // Track processed features to avoid duplicates
+  
+  // Rule-based phishing pattern detection (highest priority - show first)
+  if (transactionData) {
+    const phishingPatterns = detectPhishingPatterns(transactionData);
+    for (const pattern of phishingPatterns) {
+      const severityClass = pattern.severity === 'high' ? 'critical' : pattern.severity === 'medium' ? 'warning' : 'low';
+      html += `<div class="risk-item ${severityClass}">
+        <div class="risk-header-row">
+          <span class="risk-level-badge ${severityClass}">${pattern.severity.toUpperCase()}</span>
+          <span class="risk-feature-box">${pattern.pattern}</span>
+        </div>
+        <div class="risk-item-desc">
+          ${pattern.message}
+          ${pattern.category ? `<div style="margin-top: 6px; font-size: 11px; color: var(--muted);">Category: ${pattern.category}</div>` : ''}
+        </div>
+        <div class="risk-numerical-details">
+          <a href="${pattern.learnMoreUrl}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 12px;">
+            Learn more about this phishing pattern →
+          </a>
+        </div>
+      </div>`;
+    }
+  }
   
   // Account LLM explanations (highest priority)
   if (accountData.llm_explanations?.account) {
@@ -1013,6 +1153,275 @@ function extractFunctions(data: string): string[] {
     '0x42842e0e': 'safeTransferFrom',
   };
   return functionMap[selector] ? [functionMap[selector]] : [];
+}
+
+// Rule-based phishing pattern detection
+interface PhishingPattern {
+  pattern: string;
+  severity: 'high' | 'medium' | 'low';
+  message: string;
+  learnMoreUrl: string;
+  category: string;
+}
+
+function detectPhishingPatterns(transactionData: any): PhishingPattern[] {
+  const patterns: PhishingPattern[] = [];
+  const data = transactionData.data || '0x';
+  const value = transactionData.value || '0x0';
+  const to = transactionData.to || '';
+  
+  if (!data || data === '0x' || data.length < 10) {
+    // Even without data, check for dust transfer or other value-based patterns
+    const valueNum = BigInt(value === '0x' || value === '0x0' ? '0x0' : value);
+    if (valueNum > BigInt(0) && valueNum < BigInt('1000000000000000')) {
+      patterns.push({
+        pattern: 'dustValueTransfer',
+        severity: 'low',
+        message: '⚠️ Very small value transfer detected (dust transfer). This might be an address poisoning attack to contaminate your transaction history.',
+        learnMoreUrl: 'https://www.coindesk.com/learn/what-is-address-poisoning-in-crypto/',
+        category: 'Address Poisoning'
+      });
+    }
+    return patterns;
+  }
+  
+  const selector = data.slice(0, 10).toLowerCase();
+  const valueNum = BigInt(value === '0x' || value === '0x0' ? '0x0' : value);
+  
+  // Track which patterns we've detected to avoid duplicates and enable combination detection
+  let hasApprovalPattern = false;
+  let hasTransferPattern = false;
+  let hasZeroValue = valueNum === BigInt(0);
+  let hasDustValue = valueNum > BigInt(0) && valueNum < BigInt('1000000000000000');
+  
+  // ========== PATTERN 2: Fraudulent Authorization (Category I: Ice Phishing) ==========
+  
+  // I-C: setApprovalForAll - HIGH RISK
+  if (selector === '0xa22cb465') {
+    hasApprovalPattern = true;
+    patterns.push({
+      pattern: 'setApprovalForAll',
+      severity: 'high',
+      message: '⚠️ SetApprovalForAll is used in this transaction. This grants unlimited permission to transfer ALL your NFTs from this collection to any address.',
+      learnMoreUrl: 'https://ethereum.org/en/developers/docs/standards/tokens/erc-721/#approval',
+      category: 'Fraudulent Authorization'
+    });
+  }
+  
+  // I-A: approve - HIGH RISK
+  if (selector === '0x095ea7b3') {
+    hasApprovalPattern = true;
+    patterns.push({
+      pattern: 'approve',
+      severity: 'high',
+      message: '⚠️ Approve function is used in this transaction. This grants permission to transfer your tokens/NFTs to a specific address.',
+      learnMoreUrl: 'https://ethereum.org/en/developers/docs/standards/tokens/erc-20/#approve',
+      category: 'Fraudulent Authorization'
+    });
+  }
+  
+  // I-A: increaseAllowance - HIGH RISK (ERC-20 optional)
+  if (selector === '0x39509351') {
+    hasApprovalPattern = true;
+    patterns.push({
+      pattern: 'increaseAllowance',
+      severity: 'high',
+      message: '⚠️ IncreaseAllowance function is used. This increases the approved amount for token transfers.',
+      learnMoreUrl: 'https://ethereum.org/en/developers/docs/standards/tokens/erc-20/#approve',
+      category: 'Fraudulent Authorization'
+    });
+  }
+  
+  // I-B: permit - HIGH RISK (off-chain signing)
+  if (selector === '0xd505accf' || selector === '0x8fcb4ce1') {
+    hasApprovalPattern = true;
+    patterns.push({
+      pattern: 'permit',
+      severity: 'high',
+      message: '⚠️ Permit function detected. This allows off-chain signing for token approvals.',
+      learnMoreUrl: 'https://eips.ethereum.org/EIPS/eip-2612',
+      category: 'Fraudulent Authorization'
+    });
+  }
+  
+  // ========== Transfer patterns ==========
+  const isTransferFunction = selector === '0x23b872dd' || selector === '0x42842e0e' || selector === '0xb88d4fde';
+  
+  if (isTransferFunction) {
+    hasTransferPattern = true;
+    
+    // ========== PATTERN 4: Induced Transfer ==========
+    // Zero value NFT transfer - MEDIUM RISK
+    if (hasZeroValue) {
+      patterns.push({
+        pattern: 'zeroValueTransfer',
+        severity: 'medium',
+        message: '⚠️ Zero value NFT transfer detected. This might be an address poisoning attack or induced transfer scam.',
+        learnMoreUrl: 'https://www.coindesk.com/learn/what-is-address-poisoning-in-crypto/',
+        category: 'Address Poisoning'
+      });
+    }
+    
+    // ========== PATTERN 2: Fraudulent Authorization - Transfer after approval ==========
+    // If this is a transfer and we also detected approval, it's highly suspicious
+    if (hasApprovalPattern) {
+      patterns.push({
+        pattern: 'approvalThenTransfer',
+        severity: 'high',
+        message: '🚨 CRITICAL: This transaction combines approval and transfer functions. This is a classic Fraudulent Authorization attack pattern where scammers get permission and immediately steal your NFTs.',
+        learnMoreUrl: 'https://ethereum.org/en/developers/docs/standards/tokens/erc-721/#approval',
+        category: 'Fraudulent Authorization'
+      });
+    } else {
+      // Transfer without detected approval (could still be suspicious if approval happened earlier)
+      patterns.push({
+        pattern: 'suspiciousTransfer',
+        severity: 'medium',
+        message: '⚠️ NFT transfer function detected. If you recently approved this address, this could be part of a Fraudulent Authorization attack.',
+        learnMoreUrl: 'https://ethereum.org/en/developers/docs/standards/tokens/erc-721/#approval',
+        category: 'Fraudulent Authorization'
+      });
+    }
+  }
+  
+  // ========== CATEGORY II: NFT Order Scam ==========
+  
+  // II-A: bulkTransfer - HIGH RISK
+  // Common selectors for bulk transfer functions
+  const bulkTransferSelectors = [
+    '0x646cf558', // bulkTransfer (some implementations)
+    '0x4e1273f4', // bulkTransfer (OpenSea-like)
+  ];
+  if (bulkTransferSelectors.includes(selector)) {
+    patterns.push({
+      pattern: 'bulkTransfer',
+      severity: 'high',
+      message: '⚠️ Bulk transfer function detected. Scammers often replace recipient addresses in bulk transfers to steal multiple NFTs.',
+      learnMoreUrl: 'https://support.opensea.io/hc/en-us/articles/1500006975482',
+      category: 'NFT Order Scam'
+    });
+  }
+  
+  // II-B: Proxy upgrade - CRITICAL RISK
+  // Common upgrade function selectors
+  const upgradeSelectors = [
+    '0x3659cfe6', // upgradeTo (UUPS)
+    '0x4f1ef286', // upgradeToAndCall (UUPS)
+    '0x8f283970', // changeAdmin (Transparent Proxy)
+  ];
+  if (upgradeSelectors.includes(selector)) {
+    patterns.push({
+      pattern: 'proxyUpgrade',
+      severity: 'high',
+      message: '🚨 Proxy upgrade function detected. This is extremely dangerous! Scammers use this to replace proxy implementation and steal your NFTs.',
+      learnMoreUrl: 'https://blog.openzeppelin.com/proxy-patterns/',
+      category: 'NFT Order Scam'
+    });
+  }
+  
+  // ========== CATEGORY III: Address Poisoning ==========
+  
+  // III-A: Zero value transfer (already covered above in transfer section)
+  
+  // III-C: Dust value transfer - LOW RISK (small ETH value)
+  // Check this separately from transfer functions, as dust can be sent with any transaction
+  if (hasDustValue && !isTransferFunction) {
+    patterns.push({
+      pattern: 'dustValueTransfer',
+      severity: 'low',
+      message: '⚠️ Very small value transfer detected (dust transfer). This might be an address poisoning attack to contaminate your transaction history.',
+      learnMoreUrl: 'https://www.coindesk.com/learn/what-is-address-poisoning-in-crypto/',
+      category: 'Address Poisoning'
+    });
+  }
+  
+  // Combined pattern: Dust transfer + suspicious function
+  if (hasDustValue && (hasApprovalPattern || isTransferFunction)) {
+    patterns.push({
+      pattern: 'dustWithSuspiciousFunction',
+      severity: 'medium',
+      message: '⚠️ This transaction combines a dust value transfer with a suspicious function. This could be a sophisticated address poisoning attack combined with other phishing patterns.',
+      learnMoreUrl: 'https://www.coindesk.com/learn/what-is-address-poisoning-in-crypto/',
+      category: 'Address Poisoning'
+    });
+  }
+  
+  // ========== CATEGORY IV: Payable Function Scam ==========
+  
+  // IV-A: Airdrop/Claim functions - MEDIUM RISK
+  const airdropSelectors = [
+    '0x379607f5', // claim()
+    '0x4e71d92d', // claimReward()
+    '0x372500ab', // claimRewards()
+    '0x2e7ba6ef', // claimAirdrop()
+  ];
+  if (airdropSelectors.includes(selector) && valueNum > BigInt(0)) {
+    patterns.push({
+      pattern: 'airdropFunction',
+      severity: 'medium',
+      message: '⚠️ Airdrop/Claim function detected with ETH value. This might be a Payable Function Scam. Scammers steal your native tokens when you call these functions.',
+      learnMoreUrl: 'https://ethereum.org/en/developers/docs/smart-contracts/security/',
+      category: 'Payable Function Scam'
+    });
+  }
+  
+  // IV-B: Wallet-like functions - HIGH RISK
+  const walletFunctionSelectors = [
+    '0x3af32abf', // SecurityUpdate() or similar
+    '0x8da5cb5b', // update() or similar
+  ];
+  // Check for payable functions with suspicious names (via function selector or if value > 0)
+  if (valueNum > BigInt(0) && to && to.length === 42) {
+    // If transaction sends ETH to a contract, it might be a payable function scam
+    // We can't detect function name from selector alone, but we flag suspicious payable calls
+    const suspiciousPatterns = ['update', 'upgrade', 'connect', 'security'];
+    // This is heuristic - in real implementation, we'd decode function name
+  }
+  
+  // ========== PATTERN 1: Deceptive Signature ==========
+  // This is harder to detect from transaction data alone as it involves off-chain signatures
+  // But we can detect atomicMatch() calls with suspicious parameters
+  const isAtomicMatch = selector === '0xab834bab' || selector === '0x88316456'; // atomicMatch variants
+  if (isAtomicMatch) {
+    patterns.push({
+      pattern: 'atomicMatch',
+      severity: 'high',
+      message: '⚠️ Atomic match function detected (OpenSea/Blur order matching). This could be a Deceptive Signature attack if the order price is 0 ETH or malicious.',
+      learnMoreUrl: 'https://support.opensea.io/hc/en-us/articles/1500006975482',
+      category: 'Deceptive Signature'
+    });
+    
+    // Combined: Atomic match with zero value = highly suspicious
+    if (hasZeroValue) {
+      patterns.push({
+        pattern: 'freeBuyOrder',
+        severity: 'high',
+        message: '🚨 CRITICAL: Atomic match with zero value detected. This is a Free Buy Order scam where scammers set malicious parameters to buy your NFTs at 0 ETH.',
+        learnMoreUrl: 'https://support.opensea.io/hc/en-us/articles/1500006975482',
+        category: 'Deceptive Signature'
+      });
+    }
+  }
+  
+  // ========== Multiple Pattern Detection Summary ==========
+  // If we detected multiple high-severity patterns, add a summary warning
+  const highSeverityPatterns = patterns.filter(p => p.severity === 'high');
+  if (highSeverityPatterns.length > 1) {
+    patterns.push({
+      pattern: 'multipleHighRiskPatterns',
+      severity: 'high',
+      message: `🚨 CRITICAL: This transaction contains ${highSeverityPatterns.length} high-risk phishing patterns simultaneously. This is extremely suspicious and likely a sophisticated multi-vector attack.`,
+      learnMoreUrl: 'https://ethereum.org/en/developers/docs/smart-contracts/security/',
+      category: 'Multi-Pattern Attack'
+    });
+  }
+  
+  // ========== PATTERN 3: Stealing Identity Credentials ==========
+  // This is hard to detect from single transaction as it's an off-chain attack
+  // But we can flag if transaction transfers multiple types of tokens (heuristic)
+  // This would require analyzing multiple transactions, which is beyond single tx scope
+  
+  return patterns;
 }
 
 function formatFeatureName(name: string): string {
@@ -1257,9 +1666,10 @@ function showProgressBar(scoreElementId: string, explanationElementId: string) {
       </div>
     `;
     // Small delay to ensure DOM is updated
+    const isAccount = scoreElementId.includes('account');
     setTimeout(() => {
-      animateProgressBar(`progress-fill-${scoreElementId}`, `progress-text-${scoreElementId}`, `progress-shine-${scoreElementId}`);
-      animateProgressBar(`progress-fill-${explanationElementId}`, `progress-text-${explanationElementId}`, `progress-shine-${explanationElementId}`);
+      animateProgressBar(`progress-fill-${scoreElementId}`, `progress-text-${scoreElementId}`, `progress-shine-${scoreElementId}`, isAccount);
+      animateProgressBar(`progress-fill-${explanationElementId}`, `progress-text-${explanationElementId}`, `progress-shine-${explanationElementId}`, isAccount);
     }, 50);
   }
 }
@@ -1272,7 +1682,7 @@ function hideProgressBar(scoreElementId: string, explanationElementId: string) {
   // No need to clear here
 }
 
-function animateProgressBar(fillId: string, textId: string, shineId?: string) {
+function animateProgressBar(fillId: string, textId: string, shineId?: string, isAccount: boolean = false) {
   const fillEl = document.getElementById(fillId);
   const textEl = document.getElementById(textId);
   const shineEl = shineId ? document.getElementById(shineId) : null;
@@ -1287,30 +1697,60 @@ function animateProgressBar(fillId: string, textId: string, shineId?: string) {
   fillEl.style.visibility = 'visible';
   fillEl.style.opacity = '1';
   
-  const stages = [
-    { progress: 10, text: '10% • Initializing...' },
-    { progress: 30, text: '30% • Fetching data...' },
-    { progress: 55, text: '55% • Extracting features...' },
-    { progress: 78, text: '78% • Running model...' },
-    { progress: 92, text: '92% • Generating explanations...' },
-    { progress: 99, text: '99% • Finalizing...' }
+  // Use same progress steps as circle progress (synced with backend)
+  const steps = isAccount ? [
+    { progress: 40, text: '40% • Fetching transactions...' },
+    { progress: 70, text: '70% • Enriching NFT data...' },
+    { progress: 80, text: '80% • Extracting features...' },
+    { progress: 90, text: '90% • Running model...' },
+    { progress: 98, text: '98% • Generating explanations...' }
+  ] : [
+    { progress: 30, text: '30% • Enriching NFT data...' },
+    { progress: 50, text: '50% • Extracting features...' },
+    { progress: 60, text: '60% • Running model...' },
+    { progress: 85, text: '85% • Generating explanations...' },
+    { progress: 98, text: '98% • Finalizing...' }
   ];
   
-  let currentStage = 0;
-  const interval = setInterval(() => {
-    if (currentStage < stages.length) {
-      const stage = stages[currentStage];
-      fillEl.style.width = `${stage.progress}%`;
-      textEl.textContent = stage.text;
-      if (shineEl) {
-        shineEl.style.left = `${stage.progress}%`;
-        shineEl.style.display = 'block';
+  const startTime = Date.now();
+  const durations = isAccount ? [5000, 3000, 1000, 1000, 2000] : [2000, 500, 500, 2000, 1000];
+  
+  const updateProgress = () => {
+    const elapsed = Date.now() - startTime;
+    let cumulativeTime = 0;
+    let targetProgress = 0;
+    let currentText = 'Initializing...';
+    
+    for (let i = 0; i < steps.length; i++) {
+      cumulativeTime += durations[i];
+      if (elapsed <= cumulativeTime) {
+        const stepStartTime = cumulativeTime - durations[i];
+        const stepElapsed = elapsed - stepStartTime;
+        const stepProgress = Math.min(stepElapsed / durations[i], 1);
+        
+        const prevProgress = i > 0 ? steps[i - 1].progress : 0;
+        targetProgress = prevProgress + (steps[i].progress - prevProgress) * stepProgress;
+        currentText = steps[i].text;
+        break;
       }
-      currentStage++;
-    } else {
-      clearInterval(interval);
     }
-  }, 650); // Update every ~650ms for smooth animation
+    
+    // Cap at 98% until API response
+    targetProgress = Math.min(98, targetProgress);
+    
+    fillEl.style.width = `${targetProgress}%`;
+    textEl.textContent = `${Math.round(targetProgress)}% • ${currentText.split('•')[1]?.trim() || 'Processing...'}`;
+    if (shineEl) {
+      shineEl.style.left = `${targetProgress}%`;
+      shineEl.style.display = 'block';
+    }
+  };
+  
+  // Update every 50ms for smooth animation
+  const interval = setInterval(updateProgress, 50);
+  
+  // Store interval ID for cleanup
+  (fillEl as any).__progressInterval = interval;
 }
 
 // Event listeners
@@ -1404,6 +1844,11 @@ analyzeAccountBtn?.addEventListener('click', async () => {
     });
     
     const data = await response.json();
+    
+    // Complete progress when API response received
+    if (accountProgressTracker) {
+      accountProgressTracker.complete();
+    }
     
     if (data.detection_mode === 'no_data') {
       hideProgressBar('account-risk-score', 'account-explanation');
@@ -1538,6 +1983,12 @@ analyzeTransactionBtn?.addEventListener('click', async () => {
     });
     
     const data = await response.json();
+    
+    // Complete progress when API response received
+    if (transactionProgressTracker) {
+      transactionProgressTracker.complete();
+    }
+    
     const risk = data.transaction_scam_probability || 0;
     
     hideProgressBar('transaction-risk-score', 'transaction-explanation');

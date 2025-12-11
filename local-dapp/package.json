@@ -1,0 +1,18 @@
+{
+  "name": "scamradar-local-dapp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "hardhat node",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "serve": "cd dapp && npx serve -l 8080 ."
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.22.5"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.2"
+  }
+}
+

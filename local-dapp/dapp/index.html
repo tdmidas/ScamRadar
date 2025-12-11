@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Local NFT Sender</title>
+  <style>
+    :root {
+      --bg: #0b1021;
+      --card: #131a33;
+      --accent: #7c5dff;
+      --accent-2: #4de1ff;
+      --text: #e8ecff;
+      --muted: #9aa7c7;
+      --border: #1f2744;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 10% 20%, rgba(124,93,255,0.12), transparent 25%),
+                  radial-gradient(circle at 90% 10%, rgba(77,225,255,0.12), transparent 25%),
+                  var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 32px 16px 48px;
+    }
+    .card {
+      width: 100%;
+      max-width: 760px;
+      background: linear-gradient(145deg, #0f1630, #0c1229);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 50px rgba(0,0,0,0.35);
+      padding: 28px 28px 32px;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before, .card::after {
+      content: "";
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(50px);
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    .card::before {
+      width: 180px; height: 180px;
+      background: rgba(124,93,255,0.25);
+      top: -60px; left: -40px;
+      animation: float 10s ease-in-out infinite;
+    }
+    .card::after {
+      width: 220px; height: 220px;
+      background: rgba(77,225,255,0.2);
+      bottom: -80px; right: -60px;
+      animation: float 12s ease-in-out infinite reverse;
+    }
+    @keyframes float {
+      0% { transform: translateY(0px) scale(1); }
+      50% { transform: translateY(-10px) scale(1.02); }
+      100% { transform: translateY(0px) scale(1); }
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      letter-spacing: 0.3px;
+    }
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .section {
+      margin-top: 18px;
+      background: rgba(255,255,255,0.01);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .section h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--accent-2);
+      letter-spacing: 0.2px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0f1731;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+      transition: border 0.2s ease, box-shadow 0.2s ease;
+    }
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(124,93,255,0.12);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 11px 16px;
+      font-weight: 600;
+      color: #0b1021;
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #ff8a00, #ffb347);
+      color: #0b1021;
+      box-shadow: 0 6px 20px rgba(255,138,0,0.35);
+    }
+    .btn-secondary {
+      background: linear-gradient(135deg, var(--accent-2), #5cf2ff);
+      color: #041625;
+      box-shadow: 0 6px 20px rgba(77,225,255,0.35);
+    }
+    button:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.03);
+    }
+    button:active {
+      transform: translateY(0);
+      box-shadow: none;
+    }
+    .status {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(124,93,255,0.08);
+      border: 1px solid rgba(124,93,255,0.25);
+      color: var(--text);
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #4de1ff;
+      box-shadow: 0 0 8px rgba(77,225,255,0.8);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.1); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    @media (min-width: 720px) {
+      .row.two { grid-template-columns: 1fr 1fr; }
+    }
+    .helper {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .tag {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(124,93,255,0.12);
+      border: 1px solid rgba(124,93,255,0.2);
+      color: #cfd6ff;
+      font-size: 12px;
+      margin-left: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Local NFT Sender</h1>
+    <p class="subtitle">Hardhat localhost </p>
+
+    <div class="section">
+      <h3>1) Kết nối ví</h3>
+      <div class="actions">
+        <button class="btn-primary" id="connect">Connect MetaMask</button>
+        <button class="btn-secondary" id="mint">Mint test NFT</button>
+        <button class="btn-secondary" id="send">Send NFT</button>
+      </div>
+      <div class="section" style="margin-top: 18px;">
+        <h3>3) Test Phishing Patterns</h3>
+        <div style="margin-bottom: 12px; font-size: 12px; color: var(--muted);">
+          <strong>Fraudulent Authorization</strong>
+        </div>
+        <div class="actions">
+          <button class="btn-secondary" id="test-setApprovalForAll" style="background: linear-gradient(135deg, #4de1ff, #5cf2ff); color: #0b1021;">
+            Test setApprovalForAll
+          </button>
+          <button class="btn-secondary" id="test-approve" style="background: linear-gradient(135deg, #4de1ff, #5cf2ff); color: #0b1021;">
+            Test Approve
+          </button>
+          <button class="btn-secondary" id="test-increaseAllowance" style="background: linear-gradient(135deg, #4de1ff, #5cf2ff); color: #0b1021;">
+            Test increaseAllowance
+          </button>
+        </div>
+        <div style="margin: 16px 0 12px; font-size: 12px; color: var(--muted);">
+          <strong>Address Poisoning</strong>
+        </div>
+        <div class="actions">
+          <button class="btn-secondary" id="test-zero-transfer" style="background: linear-gradient(135deg, #4de1ff, #5cf2ff); color: #0b1021;">
+            Test Zero Value Transfer
+          </button>
+          <button class="btn-secondary" id="test-dust-transfer" style="background: linear-gradient(135deg, #4de1ff, #5cf2ff); color: #0b1021;">
+            Test Dust Transfer
+          </button>
+        </div>
+        <div style="margin: 16px 0 12px; font-size: 12px; color: var(--muted);">
+          <strong>NFT Order Scam</strong>
+        </div>
+        <div class="actions">
+          <button class="btn-secondary" id="test-bulk-transfer" style="background: linear-gradient(135deg, #4de1ff, #5cf2ff); color: #0b1021;">
+            Test Bulk Transfer
+          </button>
+        </div>
+        <div style="margin: 16px 0 12px; font-size: 12px; color: var(--muted);">
+          <strong>Payable Function Scam</strong>
+        </div>
+        <div class="actions">
+          <button class="btn-secondary" id="test-airdrop" style="background: linear-gradient(135deg, #4de1ff, #5cf2ff); color: #0b1021;">
+            Test Airdrop Function
+          </button>
+        </div>
+    
+      </div>
+      <div id="status" class="status" style="display:none;">
+        <span class="dot"></span>
+        <span id="statusText"></span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>2) Thông tin giao dịch <span class="tag">tokenId 0</span></h3>
+      <div class="row two">
+        <div>
+          <label>Recipient (bất kỳ địa chỉ Ethereum)</label>
+          <input id="recipientCustom" value="" placeholder="0x... (bắt buộc)" />
+          <div class="helper">Nhập địa chỉ nhận (có thể dùng Hardhat #1)</div>
+        </div>
+        <div>
+          <label>Token ID</label>
+          <input id="tokenId" value="0" placeholder="0" />
+          <div class="helper">Mặc định 0, có thể đổi nếu đã mint thêm</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Contract address (LocalNFT)</label>
+          <input id="nftAddress" value="" placeholder="0xContract..." />
+          <div class="helper">Dán địa chỉ deploy (vd: 0x5FbD...0aa3)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { ethers } from "https://cdn.jsdelivr.net/npm/ethers@6.12.0/dist/ethers.min.js";
+
+    const statusBox = document.getElementById("status");
+    const statusText = document.getElementById("statusText");
+    const defaultRecipient = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"; // Hardhat account #1
+    const defaultContract = "0x5FbDB2315678afecb367f032d93F642f64180aa3"; // thường là địa chỉ deploy mặc định của Hardhat
+    document.getElementById("nftAddress").value = defaultContract;
+
+    let signer;
+    let connectedAddr;
+
+    const fetchOwned = async (addr, nftAddr) => {
+      try {
+        const abiEnum = [
+          "function balanceOf(address owner) view returns (uint256)",
+          "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+        ];
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const nft = new ethers.Contract(nftAddr, abiEnum, provider);
+        const bal = await nft.balanceOf(addr);
+        const count = Number(bal);
+        const tokens = [];
+        for (let i = 0; i < count; i++) {
+          const tid = await nft.tokenOfOwnerByIndex(addr, i);
+          tokens.push(Number(tid));
+        }
+        setStatus(`Connected to wallet ${addr} · Owned ${count} NFT(s) ${tokens.length ? "(" + tokens.join(", ") + ")" : ""}`);
+      } catch (e) {
+        console.error("[Backend] Error fetching NFT list:", e);
+        setStatus(`Connected to wallet ${addr}`);
+      }
+    };
+
+    const setStatus = (msg, show = true) => {
+      statusText.textContent = msg;
+      statusBox.style.display = show ? "flex" : "none";
+    };
+
+    document.getElementById("connect").onclick = async () => {
+      try {
+        if (!window.ethereum) {
+          alert("MetaMask is required.");
+          return;
+        }
+        setStatus("Connecting to wallet...");
+        await window.ethereum.request({ method: "eth_requestAccounts" });
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        signer = await provider.getSigner();
+        connectedAddr = await signer.getAddress();
+
+        // Hiển thị sở hữu
+        const nftAddr = document.getElementById("nftAddress").value.trim();
+        if (ethers.isAddress(nftAddr)) {
+          await fetchOwned(connectedAddr, nftAddr);
+        } else {
+          setStatus(`Connected to wallet ${connectedAddr}`);
+        }
+      } catch (e) {
+        console.error("[Backend] Connection error:", e);
+        setStatus("Connection failed. Please try again.");
+      }
+    };
+
+    document.getElementById("send").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const to = document.getElementById("recipientCustom").value.trim();
+      const nftAddr = document.getElementById("nftAddress").value.trim();
+      const tokenIdRaw = document.getElementById("tokenId").value.trim();
+      const tokenId = tokenIdRaw === "" ? 0 : Number(tokenIdRaw);
+
+      if (!ethers.isAddress(to)) {
+        alert("Invalid recipient address");
+        return;
+      }
+      if (!ethers.isAddress(nftAddr)) {
+        alert("Invalid contract address");
+        return;
+      }
+      if (!Number.isInteger(tokenId) || tokenId < 0) {
+        alert("Invalid token ID");
+        return;
+      }
+
+      const abi = ["function safeTransferFrom(address from, address to, uint256 tokenId)"];
+      const nft = new ethers.Contract(nftAddr, abi, signer);
+
+      try {
+        setStatus("Sending NFT...");
+        const tx = await nft.safeTransferFrom(await signer.getAddress(), to, tokenId);
+        setStatus(`NFT sent successfully. Tx: ${tx.hash}`);
+        
+        // Cập nhật danh sách sở hữu
+        await fetchOwned(connectedAddr, nftAddr);
+      } catch (e) {
+        console.error("[Backend] Send NFT error:", e);
+        setStatus("Failed to send NFT. Please try again.");
+      }
+    };
+
+    document.getElementById("mint").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const nftAddr = document.getElementById("nftAddress").value.trim();
+      if (!ethers.isAddress(nftAddr)) {
+        alert("Invalid contract address");
+        return;
+      }
+
+      try {
+        setStatus("Minting NFT...");
+        const abiMint = ["function mintFaucet()"];
+        const nft = new ethers.Contract(nftAddr, abiMint, signer);
+        const tx = await nft.mintFaucet();
+        await tx.wait();
+        setStatus(`NFT minted successfully. Tx: ${tx.hash}`);
+        await fetchOwned(connectedAddr, nftAddr);
+      } catch (e) {
+        console.error("[Backend] Mint NFT error:", e);
+        setStatus("Failed to mint NFT. Please try again.");
+      }
+    };
+
+    // Test Phishing Patterns
+    document.getElementById("test-setApprovalForAll").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const nftAddr = document.getElementById("nftAddress").value.trim();
+      const to = document.getElementById("recipientCustom").value.trim() || defaultRecipient;
+      
+      if (!ethers.isAddress(nftAddr)) {
+        alert("Invalid contract address");
+        return;
+      }
+      if (!ethers.isAddress(to)) {
+        alert("Invalid recipient address");
+        return;
+      }
+
+      try {
+        setStatus("Testing setApprovalForAll pattern...");
+        const abi = ["function setApprovalForAll(address operator, bool approved)"];
+        const nft = new ethers.Contract(nftAddr, abi, signer);
+        const tx = await nft.setApprovalForAll(to, true);
+        setStatus(`setApprovalForAll triggered. Tx: ${tx.hash}`);
+      } catch (e) {
+        console.error("[Backend] setApprovalForAll error:", e);
+        setStatus("Failed to trigger setApprovalForAll. Please try again.");
+      }
+    };
+
+    document.getElementById("test-approve").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const nftAddr = document.getElementById("nftAddress").value.trim();
+      const to = document.getElementById("recipientCustom").value.trim() || defaultRecipient;
+      const tokenIdRaw = document.getElementById("tokenId").value.trim();
+      const tokenId = tokenIdRaw === "" ? 0 : Number(tokenIdRaw);
+      
+      if (!ethers.isAddress(nftAddr)) {
+        alert("Invalid contract address");
+        return;
+      }
+      if (!ethers.isAddress(to)) {
+        alert("Invalid recipient address");
+        return;
+      }
+
+      try {
+        setStatus("Testing Approve pattern...");
+        const abi = ["function approve(address to, uint256 tokenId)"];
+        const nft = new ethers.Contract(nftAddr, abi, signer);
+        const tx = await nft.approve(to, tokenId);
+        setStatus(`Approve triggered. Tx: ${tx.hash}`);
+      } catch (e) {
+        console.error("[Backend] Approve error:", e);
+        setStatus("Failed to trigger Approve. Please try again.");
+      }
+    };
+
+    document.getElementById("test-zero-transfer").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const nftAddr = document.getElementById("nftAddress").value.trim();
+      const to = document.getElementById("recipientCustom").value.trim() || defaultRecipient;
+      const tokenIdRaw = document.getElementById("tokenId").value.trim();
+      const tokenId = tokenIdRaw === "" ? 0 : Number(tokenIdRaw);
+      
+      if (!ethers.isAddress(nftAddr)) {
+        alert("Invalid contract address");
+        return;
+      }
+      if (!ethers.isAddress(to)) {
+        alert("Invalid recipient address");
+        return;
+      }
+
+      try {
+        setStatus("Testing Zero Value Transfer pattern...");
+        const abi = ["function safeTransferFrom(address from, address to, uint256 tokenId)"];
+        const nft = new ethers.Contract(nftAddr, abi, signer);
+        const tx = await nft.safeTransferFrom(await signer.getAddress(), to, tokenId, {
+          value: 0 // Explicitly set value to 0
+        });
+        setStatus(`Zero value transfer triggered. Tx: ${tx.hash}`);
+        await fetchOwned(connectedAddr, nftAddr);
+      } catch (e) {
+        console.error("[Backend] Zero transfer error:", e);
+        setStatus("Failed to trigger zero transfer. Please try again.");
+      }
+    };
+
+    document.getElementById("test-increaseAllowance").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const nftAddr = document.getElementById("nftAddress").value.trim();
+      const to = document.getElementById("recipientCustom").value.trim() || defaultRecipient;
+      
+      if (!ethers.isAddress(nftAddr)) {
+        alert("Invalid contract address");
+        return;
+      }
+      if (!ethers.isAddress(to)) {
+        alert("Invalid recipient address");
+        return;
+      }
+
+      try {
+        setStatus("Testing increaseAllowance pattern...");
+        const abi = ["function increaseAllowance(address spender, uint256 addedValue)"];
+        const token = new ethers.Contract(nftAddr, abi, signer);
+        const tx = await token.increaseAllowance(to, ethers.parseEther("1000"));
+        setStatus(`increaseAllowance triggered. Tx: ${tx.hash}`);
+      } catch (e) {
+        console.error("[Backend] increaseAllowance error:", e);
+        setStatus("Contract may not support increaseAllowance (ERC-20 only). Error: " + e.message);
+      }
+    };
+
+    document.getElementById("test-dust-transfer").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const to = document.getElementById("recipientCustom").value.trim() || defaultRecipient;
+      
+      if (!ethers.isAddress(to)) {
+        alert("Invalid recipient address");
+        return;
+      }
+
+      try {
+        setStatus("Testing Dust Transfer pattern...");
+        const tx = await signer.sendTransaction({
+          to: to,
+          value: ethers.parseEther("0.0001") // 0.0001 ETH = dust
+        });
+        setStatus(`Dust transfer triggered. Tx: ${tx.hash}`);
+      } catch (e) {
+        console.error("[Backend] Dust transfer error:", e);
+        setStatus("Failed to trigger dust transfer. Please try again.");
+      }
+    };
+
+    document.getElementById("test-bulk-transfer").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const nftAddr = document.getElementById("nftAddress").value.trim();
+      const to = document.getElementById("recipientCustom").value.trim() || defaultRecipient;
+      
+      if (!ethers.isAddress(nftAddr)) {
+        alert("Invalid contract address");
+        return;
+      }
+      if (!ethers.isAddress(to)) {
+        alert("Invalid recipient address");
+        return;
+      }
+
+      try {
+        setStatus("Testing Bulk Transfer pattern...");
+        const abi = [
+          "function bulkTransfer(address[] memory recipients, uint256[] memory tokenIds)",
+          "function bulkTransferFrom(address from, address[] memory recipients, uint256[] memory tokenIds)"
+        ];
+        const nft = new ethers.Contract(nftAddr, abi, signer);
+        const myAddr = await signer.getAddress();
+        try {
+          const tx = await nft.bulkTransferFrom(myAddr, [to], [0]);
+          setStatus(`Bulk transfer triggered. Tx: ${tx.hash}`);
+        } catch {
+          const tx = await nft.bulkTransfer([to], [0]);
+          setStatus(`Bulk transfer triggered. Tx: ${tx.hash}`);
+        }
+      } catch (e) {
+        console.error("[Backend] Bulk transfer error:", e);
+        setStatus("Contract may not support bulkTransfer. This pattern requires marketplace contracts.");
+      }
+    };
+
+    document.getElementById("test-airdrop").onclick = async () => {
+      if (!signer) {
+        alert("Please connect wallet first");
+        return;
+      }
+      const nftAddr = document.getElementById("nftAddress").value.trim();
+      
+      if (!ethers.isAddress(nftAddr)) {
+        alert("Invalid contract address");
+        return;
+      }
+
+      try {
+        setStatus("Testing Airdrop Function pattern...");
+        const abi = [
+          "function claim() payable",
+          "function claimReward() payable",
+          "function claimRewards() payable",
+          "function claimAirdrop() payable"
+        ];
+        const airdrop = new ethers.Contract(nftAddr, abi, signer);
+        const tx = await airdrop.claim({ value: ethers.parseEther("0.001") });
+        setStatus(`Airdrop function triggered. Tx: ${tx.hash}`);
+      } catch (e) {
+        console.error("[Backend] Airdrop error:", e);
+        setStatus("Contract may not support airdrop functions. This pattern requires malicious contracts.");
+      }
+    };
+  </script>
+</body>
+</html>
+
