@@ -19,10 +19,24 @@ BASE_URL = os.getenv("RARIBLE_BASE_URL", "https://api.rarible.org/v0.1")
 RARIBLE_API_KEYS = settings.rarible_api_keys if settings.rarible_api_keys else ([settings.rarible_api_key] if settings.rarible_api_key else [])
 _rarible_cycle = itertools.cycle(RARIBLE_API_KEYS) if RARIBLE_API_KEYS else itertools.cycle([""])
 
-_DEFAULT_TIMEOUT = httpx.Timeout(2.0, connect=1.0)  # Aggressive timeout: 2s total, 1s connect (fail fast)
+_DEFAULT_TIMEOUT = httpx.Timeout(1.5, connect=0.5)  # Very aggressive timeout: 1.5s total, 0.5s connect (fail fast)
 
 # Cache for collections that don't exist (404) to avoid repeated API calls
 _NOT_FOUND_CACHE: Set[str] = set()
+
+# Shared HTTP client with connection pooling for better performance
+_rarible_client: Optional[httpx.AsyncClient] = None
+
+async def _get_rarible_client() -> httpx.AsyncClient:
+    """Get or create shared HTTP client with connection pooling"""
+    global _rarible_client
+    if _rarible_client is None:
+        _rarible_client = httpx.AsyncClient(
+            timeout=_DEFAULT_TIMEOUT,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+            http2=True  # HTTP/2 for better performance
+        )
+    return _rarible_client
 
 async def rarible_get(path: str, params: Optional[Dict[str, Any]] = None, allow_404: bool = False, api_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
@@ -50,25 +64,26 @@ async def rarible_get(path: str, params: Optional[Dict[str, Any]] = None, allow_
     
     url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}"
     start_time = time.time()
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=headers) as client:
-        r = await client.get(url, params=params or {})
-        elapsed = time.time() - start_time
-        
-        # Handle 404 gracefully if allowed
-        if r.status_code == 404 and allow_404:
-            logger.debug(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s (Status: 404 - Not Found)")
-            return None
-        
-        # Debug: Print response details if error
-        if r.status_code != 200:
-            logger.warning(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s (Status: {r.status_code})")
-            if r.status_code == 404:
-                logger.debug(f"   Collection not found: {path}")
-        else:
-            logger.debug(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s")
-        
-        r.raise_for_status()
-        return r.json()
+    # Use shared client with connection pooling for better performance
+    client = await _get_rarible_client()
+    r = await client.get(url, params=params or {}, headers=headers)
+    elapsed = time.time() - start_time
+    
+    # Handle 404 gracefully if allowed
+    if r.status_code == 404 and allow_404:
+        logger.debug(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s (Status: 404 - Not Found)")
+        return None
+    
+    # Debug: Print response details if error
+    if r.status_code != 200:
+        logger.warning(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s (Status: {r.status_code})")
+        if r.status_code == 404:
+            logger.debug(f"   Collection not found: {path}")
+    else:
+        logger.debug(f"⏱️ [TIMING] Rarible API {path}: {elapsed:.2f}s")
+    
+    r.raise_for_status()
+    return r.json()
 
 async def items_by_owner(
     owner: str,
@@ -279,14 +294,15 @@ async def enrich_transactions_with_nft_data(transactions: list[Dict[str, Any]]) 
             tasks.append(collection_statistics(cid, api_key=api_key))
         
         try:
-            # All calls run in parallel with timeout protection
-            # Set overall timeout to 3s (should be enough for parallel calls with 2s individual timeout)
+            # All calls run in parallel with aggressive timeout protection
+            # Set overall timeout to 2s (matching individual timeout of 1.5s + overhead)
             stats_results = await asyncio.wait_for(
                 asyncio.gather(*tasks, return_exceptions=True),
-                timeout=3.0
+                timeout=2.0
             )
         except asyncio.TimeoutError:
-            logger.warning(f"Rarible API calls timed out after 3s for {len(uncached_collections)} collections")
+            logger.warning(f"Rarible API calls timed out after 2s for {len(uncached_collections)} collections")
+            # When timeout occurs, gather() will cancel all pending tasks automatically
             # Return None for all timed-out calls
             stats_results = [None] * len(uncached_collections)
         except Exception as e:

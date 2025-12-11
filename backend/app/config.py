@@ -46,7 +46,7 @@ class Settings(BaseModel):
     rarible_api_keys: list[str] = []
     
     # Gemini API Key
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY","AIzaSyCXQOXRGuEBEaHBxGye2VpIl5JtDsbJbTk")
     
     # Model paths
     model_dir: str = os.getenv("MODEL_DIR", "models")

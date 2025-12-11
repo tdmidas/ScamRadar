@@ -533,172 +533,65 @@ function showDefaultView() {
   transactionView?.classList.add('hidden');
 }
 
-// Progress tracker that syncs with actual backend steps
-class ProgressTracker {
-  private startTime: number;
-  private isAccount: boolean;
-  private isTransaction: boolean;
-  private circle: SVGCircleElement | null;
-  private percentEl: HTMLElement | null;
-  private stageEl: HTMLElement | null;
-  private fillEl: HTMLElement | null;
-  private textEl: HTMLElement | null;
-  private intervalId: number | null = null;
-  private currentProgress: number = 0;
-  private circumference: number = 0;
+// Helper: circular progress animation for popup (fake, stage-based)
+function animateCircularProgress(baseId: string) {
+  const circle = document.getElementById(`circle-progress-${baseId}`) as SVGCircleElement | null;
+  const percentEl = document.getElementById(`circle-percent-${baseId}`);
+  const stageEl = document.getElementById(`circle-stage-${baseId}`);
 
-  // Estimated time percentages for each step (based on actual backend timing)
-  private readonly ACCOUNT_STEPS = [
-    { name: 'Fetching transactions', progress: 0.40, duration: 5000 },  // 40% in ~5s
-    { name: 'Enriching NFT data', progress: 0.70, duration: 3000 },    // 30% in ~3s
-    { name: 'Extracting features', progress: 0.80, duration: 1000 },    // 10% in ~1s
-    { name: 'Running model', progress: 0.90, duration: 1000 },          // 10% in ~1s
-    { name: 'Generating explanations', progress: 0.98, duration: 2000 } // 8% in ~2s
+  if (!circle || !percentEl || !stageEl) return;
+
+  const radius = circle.r.baseVal.value;
+  const circumference = 2 * Math.PI * radius;
+
+  circle.style.strokeDasharray = `${circumference} ${circumference}`;
+  circle.style.strokeDashoffset = `${circumference}`;
+
+  const stages = [
+    { value: 20, label: 'Fetching data...' },
+    { value: 45, label: 'Analyzing account...' },
+    { value: 70, label: 'Scanning transaction...' },
+    { value: 90, label: 'Generating explanations...' },
+    { value: 98, label: 'Finalizing...' }
   ];
 
-  private readonly TRANSACTION_STEPS = [
-    { name: 'Enriching NFT data', progress: 0.30, duration: 2000 },     // 30% in ~2s
-    { name: 'Extracting features', progress: 0.50, duration: 500 },     // 20% in ~0.5s
-    { name: 'Running model', progress: 0.60, duration: 500 },          // 10% in ~0.5s
-    { name: 'Generating explanations', progress: 0.85, duration: 2000 }, // 25% in ~2s
-    { name: 'Finalizing', progress: 0.98, duration: 1000 }             // 13% in ~1s
-  ];
+  let currentStage = 0;
+  let currentValue = 0;
 
-  constructor(baseId: string, isAccount: boolean, isTransaction: boolean) {
-    this.startTime = Date.now();
-    this.isAccount = isAccount;
-    this.isTransaction = isTransaction;
-    
-    // Get circle elements
-    this.circle = document.getElementById(`circle-progress-${baseId}`) as SVGCircleElement | null;
-    this.percentEl = document.getElementById(`circle-percent-${baseId}`);
-    this.stageEl = document.getElementById(`circle-stage-${baseId}`);
-    
-    // Get progress bar elements (if exists)
-    this.fillEl = document.getElementById(`progress-fill-${baseId}`);
-    this.textEl = document.getElementById(`progress-text-${baseId}`);
+  const setProgress = (p: number) => {
+    const clamped = Math.max(0, Math.min(100, p));
+    const offset = circumference - (clamped / 100) * circumference;
+    circle.style.strokeDashoffset = `${offset}`;
+    percentEl.textContent = `${Math.round(clamped)}%`;
+  };
 
-    if (this.circle) {
-      const radius = this.circle.r.baseVal.value;
-      this.circumference = 2 * Math.PI * radius;
-      this.circle.style.strokeDasharray = `${this.circumference} ${this.circumference}`;
-      this.circle.style.strokeDashoffset = `${this.circumference}`;
+  setProgress(5);
+  stageEl.textContent = stages[0]?.label || 'Analyzing...';
+
+  const interval = setInterval(() => {
+    const stage = stages[currentStage];
+    if (!stage) {
+      clearInterval(interval);
+      return;
     }
 
-    this.start();
-  }
+    stageEl.textContent = stage.label;
+    const target = stage.value;
+    const stepCount = 20;
+    const step = (target - currentValue) / stepCount;
+    let steps = 0;
 
-  private start() {
-    const steps = this.isAccount ? this.ACCOUNT_STEPS : this.TRANSACTION_STEPS;
-    let currentStepIndex = 0;
-    const elapsedStart = Date.now();
-
-    const updateProgress = () => {
-      const elapsed = Date.now() - elapsedStart;
-      let targetProgress = 0;
-      let currentStep = null;
-
-      // Find current step based on elapsed time
-      let cumulativeTime = 0;
-      for (let i = 0; i < steps.length; i++) {
-        const step = steps[i];
-        cumulativeTime += step.duration;
-        
-        if (elapsed <= cumulativeTime) {
-          currentStep = step;
-          // Calculate progress within this step
-          const stepStartTime = cumulativeTime - step.duration;
-          const stepElapsed = elapsed - stepStartTime;
-          const stepProgress = Math.min(stepElapsed / step.duration, 1);
-          
-          // Get previous step progress
-          const prevProgress = i > 0 ? steps[i - 1].progress : 0;
-          targetProgress = prevProgress + (step.progress - prevProgress) * stepProgress;
-          break;
-        }
+    const stepInterval = setInterval(() => {
+      currentValue += step;
+      steps += 1;
+      setProgress(currentValue);
+      if (steps >= stepCount) {
+        clearInterval(stepInterval);
       }
+    }, 40);
 
-      // If all steps completed, stay at 98% until API response
-      if (!currentStep) {
-        targetProgress = 0.98;
-      }
-
-      this.setProgress(targetProgress, currentStep?.name || 'Finalizing...');
-    };
-
-    // Update every 50ms for smooth animation
-    this.intervalId = window.setInterval(updateProgress, 50);
-  }
-
-  private setProgress(progress: number, stage: string) {
-    this.currentProgress = Math.max(0, Math.min(98, progress)); // Cap at 98% until API response
-    
-    // Update circle
-    if (this.circle && this.circumference > 0) {
-      const offset = this.circumference - (this.currentProgress / 100) * this.circumference;
-      this.circle.style.strokeDashoffset = `${offset}`;
-    }
-    
-    // Update percentage
-    if (this.percentEl) {
-      this.percentEl.textContent = `${Math.round(this.currentProgress)}%`;
-    }
-    
-    // Update stage (hidden but kept for debugging)
-    if (this.stageEl) {
-      this.stageEl.textContent = stage;
-    }
-
-    // Update progress bar if exists
-    if (this.fillEl) {
-      this.fillEl.style.width = `${this.currentProgress}%`;
-    }
-    if (this.textEl) {
-      this.textEl.textContent = `${Math.round(this.currentProgress)}% • ${stage}`;
-    }
-  }
-
-  complete() {
-    if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
-    this.setProgress(100, 'Complete');
-  }
-
-  stop() {
-    if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
-  }
-}
-
-// Trackers for account and transaction
-let accountProgressTracker: ProgressTracker | null = null;
-let transactionProgressTracker: ProgressTracker | null = null;
-
-// Helper: circular progress animation for popup (synced with backend)
-function animateCircularProgress(baseId: string, isAccount: boolean = false, isTransaction: boolean = false) {
-  // Stop existing tracker if any
-  if (isAccount && accountProgressTracker) {
-    accountProgressTracker.stop();
-  }
-  if (isTransaction && transactionProgressTracker) {
-    transactionProgressTracker.stop();
-  }
-
-  // Create new tracker
-  const tracker = new ProgressTracker(baseId, isAccount, isTransaction);
-  
-  if (isAccount) {
-    accountProgressTracker = tracker;
-  }
-  if (isTransaction) {
-    transactionProgressTracker = tracker;
-  }
-
-  return tracker;
+    currentStage += 1;
+  }, 900);
 }
 
 // Helper: show circular progress in the popup risk score cards
@@ -726,10 +619,10 @@ function showPopupRiskProgress() {
     transactionRiskEl.innerHTML = makeCard('Transaction Risk', 'tx-popup');
   }
 
-  // Kick off animations after DOM paint (with proper flags)
+  // Kick off animations after DOM paint
   setTimeout(() => {
-    animateCircularProgress('account-popup', true, false);
-    animateCircularProgress('tx-popup', false, true);
+    animateCircularProgress('account-popup');
+    animateCircularProgress('tx-popup');
   }, 50);
 }
 
@@ -779,11 +672,6 @@ async function analyzeTransactionForPopup(transactionData: any, recipientAddress
     });
     
     const accountData = await accountResult.json();
-    
-    // Complete progress when API response received
-    if (accountProgressTracker) {
-      accountProgressTracker.complete();
-    }
     
     // Check if account has no NFT transactions (ERC721/ERC1155)
     if (accountData.detection_mode === 'no_data') {
@@ -909,11 +797,6 @@ async function analyzeTransactionOnly(transactionData: any, accountData?: any, r
   });
   
   const result = await response.json();
-  
-  // Complete progress when API response received
-  if (transactionProgressTracker) {
-    transactionProgressTracker.complete();
-  }
   
   // Account risk display is handled in analyzeTransactionForPopup
   // Only update if accountData is provided and has data
@@ -1666,10 +1549,9 @@ function showProgressBar(scoreElementId: string, explanationElementId: string) {
       </div>
     `;
     // Small delay to ensure DOM is updated
-    const isAccount = scoreElementId.includes('account');
     setTimeout(() => {
-      animateProgressBar(`progress-fill-${scoreElementId}`, `progress-text-${scoreElementId}`, `progress-shine-${scoreElementId}`, isAccount);
-      animateProgressBar(`progress-fill-${explanationElementId}`, `progress-text-${explanationElementId}`, `progress-shine-${explanationElementId}`, isAccount);
+      animateProgressBar(`progress-fill-${scoreElementId}`, `progress-text-${scoreElementId}`, `progress-shine-${scoreElementId}`);
+      animateProgressBar(`progress-fill-${explanationElementId}`, `progress-text-${explanationElementId}`, `progress-shine-${explanationElementId}`);
     }, 50);
   }
 }
@@ -1682,7 +1564,7 @@ function hideProgressBar(scoreElementId: string, explanationElementId: string) {
   // No need to clear here
 }
 
-function animateProgressBar(fillId: string, textId: string, shineId?: string, isAccount: boolean = false) {
+function animateProgressBar(fillId: string, textId: string, shineId?: string) {
   const fillEl = document.getElementById(fillId);
   const textEl = document.getElementById(textId);
   const shineEl = shineId ? document.getElementById(shineId) : null;
@@ -1697,60 +1579,30 @@ function animateProgressBar(fillId: string, textId: string, shineId?: string, is
   fillEl.style.visibility = 'visible';
   fillEl.style.opacity = '1';
   
-  // Use same progress steps as circle progress (synced with backend)
-  const steps = isAccount ? [
-    { progress: 40, text: '40% • Fetching transactions...' },
-    { progress: 70, text: '70% • Enriching NFT data...' },
-    { progress: 80, text: '80% • Extracting features...' },
-    { progress: 90, text: '90% • Running model...' },
-    { progress: 98, text: '98% • Generating explanations...' }
-  ] : [
-    { progress: 30, text: '30% • Enriching NFT data...' },
-    { progress: 50, text: '50% • Extracting features...' },
-    { progress: 60, text: '60% • Running model...' },
-    { progress: 85, text: '85% • Generating explanations...' },
-    { progress: 98, text: '98% • Finalizing...' }
+  const stages = [
+    { progress: 10, text: '10% • Initializing...' },
+    { progress: 30, text: '30% • Fetching data...' },
+    { progress: 55, text: '55% • Extracting features...' },
+    { progress: 78, text: '78% • Running model...' },
+    { progress: 92, text: '92% • Generating explanations...' },
+    { progress: 99, text: '99% • Finalizing...' }
   ];
   
-  const startTime = Date.now();
-  const durations = isAccount ? [5000, 3000, 1000, 1000, 2000] : [2000, 500, 500, 2000, 1000];
-  
-  const updateProgress = () => {
-    const elapsed = Date.now() - startTime;
-    let cumulativeTime = 0;
-    let targetProgress = 0;
-    let currentText = 'Initializing...';
-    
-    for (let i = 0; i < steps.length; i++) {
-      cumulativeTime += durations[i];
-      if (elapsed <= cumulativeTime) {
-        const stepStartTime = cumulativeTime - durations[i];
-        const stepElapsed = elapsed - stepStartTime;
-        const stepProgress = Math.min(stepElapsed / durations[i], 1);
-        
-        const prevProgress = i > 0 ? steps[i - 1].progress : 0;
-        targetProgress = prevProgress + (steps[i].progress - prevProgress) * stepProgress;
-        currentText = steps[i].text;
-        break;
+  let currentStage = 0;
+  const interval = setInterval(() => {
+    if (currentStage < stages.length) {
+      const stage = stages[currentStage];
+      fillEl.style.width = `${stage.progress}%`;
+      textEl.textContent = stage.text;
+      if (shineEl) {
+        shineEl.style.left = `${stage.progress}%`;
+        shineEl.style.display = 'block';
       }
+      currentStage++;
+    } else {
+      clearInterval(interval);
     }
-    
-    // Cap at 98% until API response
-    targetProgress = Math.min(98, targetProgress);
-    
-    fillEl.style.width = `${targetProgress}%`;
-    textEl.textContent = `${Math.round(targetProgress)}% • ${currentText.split('•')[1]?.trim() || 'Processing...'}`;
-    if (shineEl) {
-      shineEl.style.left = `${targetProgress}%`;
-      shineEl.style.display = 'block';
-    }
-  };
-  
-  // Update every 50ms for smooth animation
-  const interval = setInterval(updateProgress, 50);
-  
-  // Store interval ID for cleanup
-  (fillEl as any).__progressInterval = interval;
+  }, 650); // Update every ~650ms for smooth animation
 }
 
 // Event listeners
@@ -1844,11 +1696,6 @@ analyzeAccountBtn?.addEventListener('click', async () => {
     });
     
     const data = await response.json();
-    
-    // Complete progress when API response received
-    if (accountProgressTracker) {
-      accountProgressTracker.complete();
-    }
     
     if (data.detection_mode === 'no_data') {
       hideProgressBar('account-risk-score', 'account-explanation');
@@ -1983,12 +1830,6 @@ analyzeTransactionBtn?.addEventListener('click', async () => {
     });
     
     const data = await response.json();
-    
-    // Complete progress when API response received
-    if (transactionProgressTracker) {
-      transactionProgressTracker.complete();
-    }
-    
     const risk = data.transaction_scam_probability || 0;
     
     hideProgressBar('transaction-risk-score', 'transaction-explanation');
